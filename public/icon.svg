@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="waqtiBg" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#1E1B4B" />
+      <stop offset="50%" stop-color="#0F172A" />
+      <stop offset="100%" stop-color="#311042" />
+    </linearGradient>
+    <linearGradient id="waqtiGold" x1="128" y1="96" x2="384" y2="416" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#A78BFA" />
+      <stop offset="50%" stop-color="#818CF8" />
+      <stop offset="100%" stop-color="#F472B6" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="120" fill="url(#waqtiBg)" />
+  <circle cx="256" cy="256" r="184" stroke="url(#waqtiGold)" stroke-width="14" stroke-opacity="0.35" />
+  <!-- Hourglass + Clock Motif -->
+  <path d="M176 144H336L278 238C268 254 268 258 278 274L336 368H176L234 274C244 258 244 254 234 238L176 144Z" stroke="url(#waqtiGold)" stroke-width="22" stroke-linecap="round" stroke-linejoin="round" fill="rgba(139, 92, 246, 0.14)" />
+  <circle cx="256" cy="256" r="12" fill="#F8FAFC" />
+  <path d="M216 336H296" stroke="#F8FAFC" stroke-width="14" stroke-linecap="round" />
+  <path d="M228 176H284" stroke="#A78BFA" stroke-width="12" stroke-linecap="round" />
+</svg>

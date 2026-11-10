@@ -1,11 +1,19 @@
-<div align="center">
+# Waqti (وقتي) — Luxury Student Study & Time OS
 
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+**Waqti (وقتي)** is an offline-first, trilingual (Arabic RTL, French, English) academic time, timetable, exam countdown, focus studio, and habit management web application built for students.
 
-  <h1>Built with AI Studio</h2>
+## Highlights
+- **Bulletproof Date & Time Engine (`src/lib/dates.ts`)**: Local `YYYY-MM-DD` and `HH:mm` storage, `date-fns` local parsing (zero UTC day-shift bugs), DST/leap-year safe math, overlap conflict detection, exact exam countdowns, and timestamp-based Pomodoro timers.
+- **First-Class Trilingual & RTL/LTR Architecture (`src/lib/i18n.ts`)**: Instant switching between **العربية (ar)**, **Français (fr)**, and **English (en)** with dynamic `<html lang dir>`, logical Tailwind CSS properties (`ms-`, `me-`, `ps-`, `pe-`, `start-`, `end-`), `Intl.PluralRules` (supporting Arabic's 6 plural forms), Western (`0-9`) vs. Arabic-Indic (`٠-٩`) numeral formatting, and optional Hijri secondary dates.
+- **Offline PWA Ready**: Configured with `vite-plugin-pwa`, Web App Manifest, service worker asset/font caching, and in-app installation support.
 
-  <p>The fastest path from prompt to production with Gemini.</p>
+## Quick Start
+```bash
+npm install
+npm run dev
+```
 
-  <a href="https://aistudio.google.com/apps">Start building</a>
-
-</div>
+## Running Unit Tests
+```bash
+npx --yes tsx --test src/lib/dates.test.ts src/lib/i18n.test.ts
+```

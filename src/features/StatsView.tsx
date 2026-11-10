@@ -1,0 +1,236 @@
+import React, { useMemo } from 'react';
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
+import { Sparkles } from 'lucide-react';
+import { useWaqtiStore } from '../store/useWaqtiStore';
+import { useTranslation } from '../hooks/useTranslation';
+import { formatLocalizedDate, shiftDateString } from '../lib/dates';
+import { SUBJECT_COLORS } from '../lib/colors';
+
+export const StatsView: React.FC = () => {
+  const { t, lang, digitsStyle, digits } = useTranslation();
+  const subjects = useWaqtiStore((s) => s.subjects);
+  const focusSessions = useWaqtiStore((s) => s.focusSessions);
+  const tasks = useWaqtiStore((s) => s.tasks);
+  const habits = useWaqtiStore((s) => s.habits);
+  const exams = useWaqtiStore((s) => s.exams);
+  const todayStr = useWaqtiStore((s) => s.todayStr);
+
+  const studyBySubjectData = useMemo(() => {
+    return subjects.map((subj) => {
+      const mins = focusSessions
+        .filter((f) => f.subjectId === subj.id && f.mode === 'focus')
+        .reduce((acc, cur) => acc + cur.durationMinutes, 0);
+      return {
+        name: subj.name.slice(0, 18),
+        hours: Number((mins / 60).toFixed(1)),
+        goal: subj.weeklyGoalHours,
+        fill: SUBJECT_COLORS[subj.color].hex,
+      };
+    });
+  }, [subjects, focusSessions]);
+
+  const dailyRhythmData = useMemo(() => {
+    return Array.from({ length: 7 }, (_, idx) => {
+      const dStr = shiftDateString(todayStr, -(6 - idx));
+      const mins = focusSessions
+        .filter((f) => f.date === dStr && f.mode === 'focus')
+        .reduce((acc, cur) => acc + cur.durationMinutes, 0);
+      return {
+        day: formatLocalizedDate(dStr, lang, 'EEE', digitsStyle),
+        hours: Number((mins / 60).toFixed(2)),
+      };
+    });
+  }, [todayStr, focusSessions, lang, digitsStyle]);
+
+  const totalFocusMinutes = useMemo(
+    () =>
+      focusSessions
+        .filter((f) => f.mode === 'focus')
+        .reduce((acc, cur) => acc + cur.durationMinutes, 0),
+    [focusSessions]
+  );
+
+  const taskCompletionRate = useMemo(() => {
+    if (tasks.length === 0) return 100;
+    const doneCount = tasks.filter((tk) => tk.status === 'done').length;
+    return Math.round((doneCount / tasks.length) * 100);
+  }, [tasks]);
+
+  const habitConsistency = useMemo(() => {
+    if (habits.length === 0) return 100;
+    const last7 = Array.from({ length: 7 }, (_, i) => shiftDateString(todayStr, -i));
+    let checks = 0;
+    for (const h of habits) {
+      checks += last7.filter((d) => h.completedDates.includes(d)).length;
+    }
+    return Math.min(100, Math.round((checks / (habits.length * 7)) * 100));
+  }, [habits, todayStr]);
+
+  const narrativeSummary = useMemo(() => {
+    const hrs = (totalFocusMinutes / 60).toFixed(1);
+    const topSubj =
+      [...studyBySubjectData].sort((a, b) => b.hours - a.hours)[0]?.name ?? '';
+    if (lang === 'ar') {
+      return `لقد أتممت ${digits(hrs)} ساعة من التركيز العميق هذا الأسبوع، وكانت مادة "${topSubj}" في صدارة اهتمامك. نسبة إنجاز مهامك بلغت ${digits(taskCompletionRate)}% وثبات عاداتك اليومية ${digits(habitConsistency)}%. استمر على هذا الإيقاع المتوازن!`;
+    }
+    if (lang === 'fr') {
+      return `Vous avez cumulé ${hrs} heures de concentration cette semaine, avec une priorité donnée à « ${topSubj} ». Votre taux de complétion des devoirs atteint ${taskCompletionRate}% et votre régularité d'habitudes est de ${habitConsistency}%.`;
+    }
+    return `You logged ${hrs} hours of deep focus this week, led by "${topSubj}". Your task completion stands at ${taskCompletionRate}% with ${habitConsistency}% habit consistency. Keep riding this calm momentum.`;
+  }, [totalFocusMinutes, studyBySubjectData, lang, digits, taskCompletionRate, habitConsistency]);
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold font-display text-[var(--text-primary)]">
+          {t('stats.title')}
+        </h1>
+        <p className="text-sm text-[var(--text-secondary)]">{t('stats.subtitle')}</p>
+      </div>
+
+      {/* Friendly Weekly Narrative Report */}
+      <div className="rounded-3xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6 flex items-start gap-3.5">
+        <Sparkles className="h-5 w-5 text-[var(--accent-primary)] shrink-0 mt-0.5" />
+        <div>
+          <h2 className="text-sm font-bold text-[var(--text-primary)]">
+            {t('stats.weeklySummaryTitle')}
+          </h2>
+          <p className="mt-1 text-sm text-[var(--text-secondary)] leading-relaxed">
+            {narrativeSummary}
+          </p>
+        </div>
+      </div>
+
+      {/* KPI Summary Strip */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="rounded-3xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5">
+          <div className="text-xs text-[var(--text-muted)]">{t('stats.taskCompletionRate')}</div>
+          <div className="mt-2 text-2xl font-bold font-mono-tabular text-[var(--text-primary)]">
+            {digits(taskCompletionRate)}%
+          </div>
+        </div>
+        <div className="rounded-3xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5">
+          <div className="text-xs text-[var(--text-muted)]">{t('stats.habitConsistency')}</div>
+          <div className="mt-2 text-2xl font-bold font-mono-tabular text-emerald-500">
+            {digits(habitConsistency)}%
+          </div>
+        </div>
+        <div className="rounded-3xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5">
+          <div className="text-xs text-[var(--text-muted)]">{t('stats.bestHours')}</div>
+          <div
+            dir="ltr"
+            className="mt-2 text-2xl font-bold font-mono-tabular text-[var(--accent-primary)]"
+          >
+            {t('stats.bestHoursValue')}
+          </div>
+        </div>
+      </div>
+
+      {/* Charts Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Daily Study Rhythm AreaChart */}
+        <div className="rounded-3xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6">
+          <h3 className="text-sm font-bold text-[var(--text-primary)] mb-4">
+            {t('stats.dailyStudyHours')}
+          </h3>
+          <div className="h-64 w-full" dir="ltr">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={dailyRhythmData}>
+                <defs>
+                  <linearGradient id="focusAreaGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#8B5CF6" stopOpacity={0.45} />
+                    <stop offset="95%" stopColor="#8B5CF6" stopOpacity={0.02} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.15)" />
+                <XAxis dataKey="day" stroke="#94A3B8" fontSize={11} />
+                <YAxis stroke="#94A3B8" fontSize={11} />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: 'var(--bg-surface)',
+                    borderColor: 'var(--border-strong)',
+                    borderRadius: '12px',
+                    fontSize: '12px',
+                  }}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="hours"
+                  stroke="#8B5CF6"
+                  strokeWidth={2.5}
+                  fill="url(#focusAreaGrad)"
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Study Hours per Subject BarChart */}
+        <div className="rounded-3xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6">
+          <h3 className="text-sm font-bold text-[var(--text-primary)] mb-4">
+            {t('stats.studyBySubject')}
+          </h3>
+          <div className="h-64 w-full" dir="ltr">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={studyBySubjectData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.15)" />
+                <XAxis dataKey="name" stroke="#94A3B8" fontSize={11} />
+                <YAxis stroke="#94A3B8" fontSize={11} />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: 'var(--bg-surface)',
+                    borderColor: 'var(--border-strong)',
+                    borderRadius: '12px',
+                    fontSize: '12px',
+                  }}
+                />
+                <Bar dataKey="hours" fill="#8B5CF6" radius={[8, 8, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      </div>
+
+      {/* Graded Exams Summary Table */}
+      <div className="rounded-3xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6">
+        <h3 className="text-sm font-bold text-[var(--text-primary)] mb-4">
+          {t('stats.gradeEvolution')}
+        </h3>
+        <div className="divide-y divide-[var(--border-subtle)]">
+          {exams
+            .filter((e) => e.grade !== undefined)
+            .map((e) => {
+              const subj = subjects.find((s) => s.id === e.subjectId);
+              return (
+                <div
+                  key={e.id}
+                  className="py-3 flex items-center justify-between text-xs"
+                >
+                  <div>
+                    <div className="font-semibold text-[var(--text-primary)]">{e.title}</div>
+                    <div className="text-[var(--text-muted)]">{subj?.name}</div>
+                  </div>
+                  <div
+                    dir="ltr"
+                    className="font-mono-tabular text-sm font-bold text-emerald-500"
+                  >
+                    {digits(e.grade ?? 0)}/{digits(e.outOf ?? 20)}
+                  </div>
+                </div>
+              );
+            })}
+        </div>
+      </div>
+    </div>
+  );
+};

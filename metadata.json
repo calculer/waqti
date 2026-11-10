@@ -1,0 +1,6 @@
+{
+  "name": "Waqti (وقتي) — Luxury Student Study & Time OS",
+  "description": "A luxury native-feeling trilingual (Arabic RTL, French, English) time, study, exam countdown, timetable, and habit management workspace for students.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
