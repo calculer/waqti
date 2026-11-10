@@ -105,7 +105,7 @@ export const FocusView: React.FC = () => {
       </div>
 
       {celebrationBanner && (
-        <div className="flex items-center justify-between rounded-2xl border border-emerald-500/40 bg-emerald-500/15 px-4 py-3 text-xs font-semibold text-emerald-600 dark:text-emerald-300">
+        <div className="flex items-center justify-between rounded-2xl border border-emerald-500/40 bg-emerald-500/15 px-4 py-3 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
           <div className="flex items-center gap-2">
             <CheckCircle2 className="h-4 w-4" />
             <span>{t('focus.sessionLogged')}</span>
@@ -183,7 +183,7 @@ export const FocusView: React.FC = () => {
           <div className="absolute flex flex-col items-center">
             <div
               dir="ltr"
-              className="text-5xl md:text-6xl font-bold font-mono-tabular tracking-tight text-[var(--text-primary)]"
+              className="text-5xl md:text-6xl font-bold font-display tabular-nums tracking-tight text-[var(--text-primary)]"
             >
               {digits(mm)}:{digits(ss)}
             </div>
@@ -211,7 +211,7 @@ export const FocusView: React.FC = () => {
                 setNowMs(Date.now());
                 pauseTimer();
               }}
-              className="flex items-center gap-2.5 rounded-2xl bg-amber-500 px-8 py-4 text-sm font-bold text-white shadow-lg transition hover:opacity-95"
+              className="flex items-center gap-2.5 rounded-2xl bg-amber-500 px-8 py-4 text-sm font-bold text-slate-950 shadow-lg transition hover:opacity-95"
             >
               <Pause className="h-5 w-5" />
               <span>{t('focus.pause')}</span>
@@ -223,7 +223,7 @@ export const FocusView: React.FC = () => {
                 setNowMs(Date.now());
                 startTimer();
               }}
-              className="flex items-center gap-2.5 rounded-2xl bg-[var(--accent-primary)] px-8 py-4 text-sm font-bold text-white shadow-lg transition hover:opacity-95"
+              className="flex items-center gap-2.5 rounded-2xl btn-primary-waqti px-8 py-4 text-sm font-bold shadow-lg transition"
             >
               <Play className="h-5 w-5" />
               <span>{t('focus.start')}</span>

@@ -26,7 +26,7 @@ test('getDirection and getDefaultWeekStart return correct values per locale', ()
   assert.equal(getDefaultWeekStart('en'), 0); // Sunday
 });
 
-test('formatPlural handles Arabic 6 plural categories and French/English plurals', () => {
+test('formatPlural handles Arabic 6 plural categories and French/English plurals including alarms', () => {
   assert.ok(formatPlural('ar', 'days', 0, 'western').includes('0'));
   assert.ok(formatPlural('ar', 'days', 1, 'western').includes('يوم واحد'));
   assert.ok(formatPlural('ar', 'days', 2, 'western').includes('يومان'));
@@ -38,6 +38,10 @@ test('formatPlural handles Arabic 6 plural categories and French/English plurals
   assert.equal(formatPlural('en', 'tasks', 4, 'western'), '4 tasks');
   assert.equal(formatPlural('fr', 'tasks', 1, 'western'), '1 tâche');
   assert.equal(formatPlural('fr', 'tasks', 3, 'western'), '3 tâches');
+
+  assert.equal(formatPlural('en', 'alarms', 2, 'western'), '2 active alarms');
+  assert.ok(formatPlural('fr', 'alarms', 2, 'western').includes('2'));
+  assert.ok(formatPlural('ar', 'alarms', 3, 'western').includes('3'));
 });
 
 test('formatDigits converts Western to Arabic-Indic numerals only when configured in Arabic', () => {

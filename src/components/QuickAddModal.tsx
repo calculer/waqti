@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { X, AlertTriangle } from 'lucide-react';
 import { useWaqtiStore } from '../store/useWaqtiStore';
 import { useTranslation } from '../hooks/useTranslation';
@@ -8,44 +8,57 @@ import {
   isValidTimeOrder,
   shiftDateString,
 } from '../lib/dates';
-import type { ExamType, PriorityLevel, WeekDay } from '../types';
+import type { AlarmRecurrence, ExamType, PriorityLevel, WeekDay } from '../types';
+
+export type QuickAddTab = 'task' | 'exam' | 'slot' | 'habit' | 'alarm';
 
 interface QuickAddModalProps {
   isOpen: boolean;
-  initialTab?: 'task' | 'exam' | 'slot' | 'habit';
+  initialTab?: QuickAddTab;
+  initialDate?: string;
   onClose: () => void;
 }
 
 export const QuickAddModal: React.FC<QuickAddModalProps> = ({
   isOpen,
   initialTab = 'task',
+  initialDate,
   onClose,
 }) => {
   const { t, lang, formatRange } = useTranslation();
   const subjects = useWaqtiStore((s) => s.subjects);
   const timetable = useWaqtiStore((s) => s.timetable);
   const todayStr = useWaqtiStore((s) => s.todayStr);
-  const weekStart = useWaqtiStore((s) => s.settings.weekStart);
+  const settings = useWaqtiStore((s) => s.settings);
   const addTask = useWaqtiStore((s) => s.addTask);
   const addExam = useWaqtiStore((s) => s.addExam);
   const addTimetableSlot = useWaqtiStore((s) => s.addTimetableSlot);
   const addHabit = useWaqtiStore((s) => s.addHabit);
+  const addAlarm = useWaqtiStore((s) => s.addAlarm);
 
-  const [tab, setTab] = useState<'task' | 'exam' | 'slot' | 'habit'>(initialTab);
+  const [tab, setTab] = useState<QuickAddTab>(initialTab);
   const [title, setTitle] = useState('');
   const [subjectId, setSubjectId] = useState(subjects[0]?.id ?? '');
-  const [date, setDate] = useState(shiftDateString(todayStr, 1));
+  const [date, setDate] = useState(initialDate || shiftDateString(todayStr, 1));
   const [startTime, setStartTime] = useState('09:00');
   const [endTime, setEndTime] = useState('10:30');
   const [dayOfWeek, setDayOfWeek] = useState<WeekDay>(1);
   const [priority, setPriority] = useState<PriorityLevel>('high');
   const [examType, setExamType] = useState<ExamType>('controle');
+  const [alarmRecurrence, setAlarmRecurrence] = useState<AlarmRecurrence>('daily');
   const [errorMsg, setErrorMsg] = useState('');
+
+  useEffect(() => {
+    if (isOpen) {
+      setTab(initialTab);
+      if (initialDate) setDate(initialDate);
+    }
+  }, [isOpen, initialTab, initialDate]);
 
   if (!isOpen) return null;
 
   const activeSubjectId = subjectId || subjects[0]?.id || '';
-  const weekdays = getOrderedWeekdays(lang, weekStart, 'EEEE');
+  const weekdays = getOrderedWeekdays(lang, settings.weekStart, 'EEEE');
 
   const slotConflicts =
     tab === 'slot' && isValidTimeOrder(startTime, endTime)
@@ -107,10 +120,24 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
       addHabit({
         name: title.trim(),
         icon: 'Sparkles',
-        color: 'violet',
+        color: 'honey',
         frequencyType: 'daily',
         targetDays: [0, 1, 2, 3, 4, 5, 6],
         timesPerWeek: 7,
+      });
+    } else if (tab === 'alarm') {
+      addAlarm({
+        title: title.trim(),
+        date,
+        time: startTime,
+        recurrence: alarmRecurrence,
+        daysOfWeek: [0, 1, 2, 3, 4, 5, 6],
+        linkedType: 'custom',
+        sound: settings.defaultAlarmSound,
+        vibrate: settings.alarmVibration,
+        snoozeMinutes: settings.defaultSnoozeMinutes,
+        leadMinutes: 0,
+        enabled: true,
       });
     }
 
@@ -132,7 +159,9 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
       >
         <div className="w-10 h-1.5 bg-[var(--border-strong)] rounded-full mx-auto mb-4 md:hidden" />
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-bold text-[var(--text-primary)]">{t('dashboard.quickAdd')}</h3>
+          <h3 className="text-lg font-bold font-display text-[var(--text-primary)]">
+            {t('dashboard.quickAdd')}
+          </h3>
           <button
             type="button"
             onClick={onClose}
@@ -144,13 +173,14 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
         </div>
 
         {/* Segmented Control */}
-        <div className="grid grid-cols-4 gap-1 rounded-xl bg-[var(--bg-elevated)] p-1 mb-5">
+        <div className="grid grid-cols-5 gap-1 rounded-xl bg-[var(--bg-elevated)] p-1 mb-5">
           {(
             [
               { id: 'task', label: t('lessons.addTask') },
               { id: 'exam', label: t('exams.add') },
               { id: 'slot', label: t('timetable.addSlot') },
               { id: 'habit', label: t('habits.add') },
+              { id: 'alarm', label: t('alarms.add') },
             ] as const
           ).map((item) => (
             <button
@@ -160,9 +190,9 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
                 setTab(item.id);
                 setErrorMsg('');
               }}
-              className={`rounded-lg py-2 px-2 text-xs font-medium transition truncate ${
+              className={`rounded-lg py-2 px-1.5 text-[11px] font-semibold transition truncate ${
                 tab === item.id
-                  ? 'bg-[var(--bg-surface)] text-[var(--text-primary)] shadow-sm'
+                  ? 'bg-[var(--bg-surface)] text-[var(--accent-primary)] shadow-sm'
                   : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
               }`}
             >
@@ -175,7 +205,11 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
           {tab !== 'slot' && (
             <div>
               <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">
-                {tab === 'habit' ? t('habits.name') : t('lessons.lessonTitle')}
+                {tab === 'habit'
+                  ? t('habits.name')
+                  : tab === 'alarm'
+                    ? t('alarms.alarmTitle')
+                    : t('lessons.lessonTitle')}
               </label>
               <input
                 type="text"
@@ -187,7 +221,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
             </div>
           )}
 
-          {tab !== 'habit' && subjects.length > 0 && (
+          {tab !== 'habit' && tab !== 'alarm' && subjects.length > 0 && (
             <div>
               <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">
                 {t('timetable.subject')}
@@ -265,7 +299,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
               </div>
               <div>
                 <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">
-                  {t('lessons.dueTime')}
+                  {tab === 'alarm' ? t('alarms.time') : t('lessons.dueTime')}
                 </label>
                 <input
                   type="time"
@@ -278,10 +312,31 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
             </div>
           ) : null}
 
+          {tab === 'alarm' && (
+            <div>
+              <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">
+                {t('alarms.recurrence')}
+              </label>
+              <select
+                value={alarmRecurrence}
+                onChange={(e) => setAlarmRecurrence(e.target.value as AlarmRecurrence)}
+                className="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3.5 py-2.5 text-sm text-[var(--text-primary)]"
+              >
+                {(['once', 'daily', 'weekdays', 'weekly', 'monthly'] as AlarmRecurrence[]).map(
+                  (rec) => (
+                    <option key={rec} value={rec}>
+                      {t(`alarms.rec.${rec}`)}
+                    </option>
+                  )
+                )}
+              </select>
+            </div>
+          )}
+
           {tab === 'exam' && (
             <div>
               <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">
-                Type
+                {t('exams.typeLabel')}
               </label>
               <select
                 value={examType}
@@ -300,7 +355,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
           )}
 
           {slotConflicts.length > 0 && (
-            <div className="flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 text-xs text-amber-600 dark:text-amber-300">
+            <div className="flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 text-xs text-amber-700 dark:text-amber-300">
               <AlertTriangle className="h-4 w-4 shrink-0" />
               <span>
                 {t('timetable.conflictWarning', {
@@ -331,7 +386,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
             </button>
             <button
               type="submit"
-              className="rounded-xl bg-[var(--accent-primary)] px-5 py-2.5 text-xs font-semibold text-white shadow-sm hover:opacity-95 transition"
+              className="rounded-xl btn-primary-waqti px-5 py-2.5 text-xs font-semibold shadow-sm transition"
             >
               {t('common.save')}
             </button>

@@ -1,123 +1,151 @@
 @import "tailwindcss";
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* ═══════════ 1. MUTED YELLOW LUXURY DESIGN TOKENS ═══════════ */
 :root {
-  --bg-canvas: #FAF8F5;
-  --bg-surface: #FFFFFF;
-  --bg-elevated: #F4F1EA;
-  --bg-glass: rgba(255, 255, 255, 0.82);
-  --border-subtle: rgba(15, 23, 42, 0.08);
-  --border-strong: rgba(15, 23, 42, 0.15);
-  --text-primary: #0F172A;
-  --text-secondary: #475569;
-  --text-muted: #64748B;
-  --accent-primary: #6D28D9;
-  --accent-secondary: #4F46E5;
-  --accent-soft: rgba(109, 40, 217, 0.10);
-  --accent-glow: rgba(109, 40, 217, 0.22);
-  --status-success: #059669;
-  --status-warning: #D97706;
-  --status-danger: #DC2626;
-  --font-ui: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
-  --font-display: 'Sora', 'Plus Jakarta Sans', system-ui, sans-serif;
+  --bg-canvas: #FBF7EC;
+  --bg-surface: #FFFDF6;
+  --bg-elevated: #FFFFFF;
+  --bg-glass: rgba(255, 253, 246, 0.88);
+  --border-subtle: #EDE4CC;
+  --border-strong: #DFD2B0;
+  --text-primary: #2B2416;
+  --text-secondary: #544932;
+  --text-muted: #7A6F55;
+  --accent-primary: #D9B44A;
+  --accent-strong: #B8902A;
+  --accent-secondary: #C49B33;
+  --accent-soft: #F6EBC4;
+  --accent-glow: rgba(217, 180, 74, 0.24);
+  --accent-ink: #2B2416;
+  --status-success: #4D7C5D;
+  --status-warning: #C87D28;
+  --status-danger: #C25447;
+  --font-ui: 'Manrope', system-ui, -apple-system, sans-serif;
+  --font-display: 'Fraunces', Georgia, serif;
+  --font-arabic-display: 'Aref Ruqaa', serif;
   --font-mono: 'JetBrains Mono', monospace;
 }
 
 .dark {
-  --bg-canvas: #090B14;
-  --bg-surface: #111526;
-  --bg-elevated: #181E34;
-  --bg-glass: rgba(17, 21, 38, 0.80);
-  --border-subtle: rgba(248, 250, 252, 0.08);
-  --border-strong: rgba(248, 250, 252, 0.16);
-  --text-primary: #F8FAFC;
-  --text-secondary: #CBD5E1;
-  --text-muted: #94A3B8;
-  --accent-primary: #8B5CF6;
-  --accent-secondary: #6366F1;
-  --accent-soft: rgba(139, 92, 246, 0.16);
-  --accent-glow: rgba(139, 92, 246, 0.30);
-  --status-success: #10B981;
-  --status-warning: #F59E0B;
-  --status-danger: #EF4444;
+  --bg-canvas: #14110A;
+  --bg-surface: #1D1910;
+  --bg-elevated: #262115;
+  --bg-glass: rgba(29, 25, 16, 0.88);
+  --border-subtle: #3A3220;
+  --border-strong: #50452C;
+  --text-primary: #F5EEDC;
+  --text-secondary: #D4C8AD;
+  --text-muted: #A89C7F;
+  --accent-primary: #E6C65C;
+  --accent-strong: #D9B44A;
+  --accent-secondary: #C8A441;
+  --accent-soft: rgba(230, 198, 92, 0.14);
+  --accent-glow: rgba(230, 198, 92, 0.26);
+  --accent-ink: #1C1608;
+  --status-success: #6CA67F;
+  --status-warning: #E09843;
+  --status-danger: #DF7063;
 }
 
-/* 5 Curated Accent Themes */
-[data-accent="violet"] {
-  --accent-primary: #7C3AED;
-  --accent-secondary: #6366F1;
-  --accent-soft: rgba(124, 58, 237, 0.14);
-  --accent-glow: rgba(124, 58, 237, 0.26);
+/* 5 Curated Warm & Harmonious Accent Themes: Honey, Sand, Olive, Terracotta, Slate-blue */
+[data-accent="honey"] {
+  --accent-primary: #D9B44A;
+  --accent-strong: #B8902A;
+  --accent-secondary: #C49B33;
+  --accent-soft: #F6EBC4;
+  --accent-glow: rgba(217, 180, 74, 0.24);
+  --accent-ink: #2B2416;
 }
-.dark[data-accent="violet"] {
-  --accent-primary: #A78BFA;
-  --accent-secondary: #818CF8;
-  --accent-soft: rgba(167, 139, 250, 0.16);
-  --accent-glow: rgba(167, 139, 250, 0.28);
-}
-
-[data-accent="ocean"] {
-  --accent-primary: #0284C7;
-  --accent-secondary: #2563EB;
-  --accent-soft: rgba(2, 132, 199, 0.13);
-  --accent-glow: rgba(2, 132, 199, 0.25);
-}
-.dark[data-accent="ocean"] {
-  --accent-primary: #38BDF8;
-  --accent-secondary: #60A5FA;
-  --accent-soft: rgba(56, 189, 248, 0.16);
-  --accent-glow: rgba(56, 189, 248, 0.28);
+.dark[data-accent="honey"] {
+  --accent-primary: #E6C65C;
+  --accent-strong: #D9B44A;
+  --accent-secondary: #C8A441;
+  --accent-soft: rgba(230, 198, 92, 0.14);
+  --accent-glow: rgba(230, 198, 92, 0.26);
+  --accent-ink: #1A1407;
 }
 
-[data-accent="emerald"] {
-  --accent-primary: #059669;
-  --accent-secondary: #0D9488;
-  --accent-soft: rgba(5, 150, 105, 0.13);
-  --accent-glow: rgba(5, 150, 105, 0.24);
+[data-accent="sand"] {
+  --accent-primary: #C49A6C;
+  --accent-strong: #A3794B;
+  --accent-secondary: #B5895A;
+  --accent-soft: #F3E6D6;
+  --accent-glow: rgba(196, 154, 108, 0.22);
+  --accent-ink: #2B2014;
 }
-.dark[data-accent="emerald"] {
-  --accent-primary: #34D399;
-  --accent-secondary: #2DD4BF;
-  --accent-soft: rgba(52, 211, 153, 0.16);
-  --accent-glow: rgba(52, 211, 153, 0.28);
-}
-
-[data-accent="rose"] {
-  --accent-primary: #E11D48;
-  --accent-secondary: #DB2777;
-  --accent-soft: rgba(225, 29, 72, 0.12);
-  --accent-glow: rgba(225, 29, 72, 0.24);
-}
-.dark[data-accent="rose"] {
-  --accent-primary: #FB7185;
-  --accent-secondary: #F472B6;
-  --accent-soft: rgba(251, 113, 133, 0.16);
-  --accent-glow: rgba(251, 113, 133, 0.28);
+.dark[data-accent="sand"] {
+  --accent-primary: #D8B286;
+  --accent-strong: #C49A6C;
+  --accent-secondary: #BE9668;
+  --accent-soft: rgba(216, 178, 134, 0.15);
+  --accent-glow: rgba(216, 178, 134, 0.25);
+  --accent-ink: #1E160C;
 }
 
-[data-accent="amber"] {
-  --accent-primary: #D97706;
-  --accent-secondary: #EA580C;
-  --accent-soft: rgba(217, 119, 6, 0.13);
-  --accent-glow: rgba(217, 119, 6, 0.25);
+[data-accent="olive"] {
+  --accent-primary: #7E8F56;
+  --accent-strong: #61713C;
+  --accent-secondary: #6F8048;
+  --accent-soft: #E7EDD8;
+  --accent-glow: rgba(126, 143, 86, 0.22);
+  --accent-ink: #1D2311;
 }
-.dark[data-accent="amber"] {
-  --accent-primary: #FBBF24;
-  --accent-secondary: #FB923C;
-  --accent-soft: rgba(251, 191, 36, 0.16);
-  --accent-glow: rgba(251, 191, 36, 0.28);
+.dark[data-accent="olive"] {
+  --accent-primary: #A3B577;
+  --accent-strong: #8B9E5F;
+  --accent-secondary: #8FA165;
+  --accent-soft: rgba(163, 181, 119, 0.15);
+  --accent-glow: rgba(163, 181, 119, 0.25);
+  --accent-ink: #171C0D;
+}
+
+[data-accent="terracotta"] {
+  --accent-primary: #C86D51;
+  --accent-strong: #A85237;
+  --accent-secondary: #B85E43;
+  --accent-soft: #F7E1DA;
+  --accent-glow: rgba(200, 109, 81, 0.22);
+  --accent-ink: #29130C;
+}
+.dark[data-accent="terracotta"] {
+  --accent-primary: #E08A6F;
+  --accent-strong: #C86D51;
+  --accent-secondary: #CC765B;
+  --accent-soft: rgba(224, 138, 111, 0.15);
+  --accent-glow: rgba(224, 138, 111, 0.25);
+  --accent-ink: #210F09;
+}
+
+[data-accent="slate"] {
+  --accent-primary: #5B7C99;
+  --accent-strong: #43617C;
+  --accent-secondary: #4E6E8A;
+  --accent-soft: #DFEAEF;
+  --accent-glow: rgba(91, 124, 153, 0.22);
+  --accent-ink: #101C26;
+}
+.dark[data-accent="slate"] {
+  --accent-primary: #82A4C2;
+  --accent-strong: #698BA8;
+  --accent-secondary: #7395B3;
+  --accent-soft: rgba(130, 164, 194, 0.15);
+  --accent-glow: rgba(130, 164, 194, 0.25);
+  --accent-ink: #101921;
 }
 
 /* Language-aware Typography */
 html[lang="ar"] {
-  --font-ui: 'IBM Plex Sans Arabic', system-ui, sans-serif;
-  --font-display: 'IBM Plex Sans Arabic', 'Amiri', sans-serif;
+  --font-ui: 'Readex Pro', system-ui, sans-serif;
+  --font-display: 'Readex Pro', system-ui, sans-serif;
+  --font-hero: 'Aref Ruqaa', 'Readex Pro', serif;
   line-height: 1.65;
 }
 
 html:not([lang="ar"]) {
-  --font-ui: 'Plus Jakarta Sans', system-ui, sans-serif;
-  --font-display: 'Sora', 'Plus Jakarta Sans', sans-serif;
+  --font-ui: 'Manrope', system-ui, sans-serif;
+  --font-display: 'Fraunces', Georgia, serif;
+  --font-hero: 'Fraunces', Georgia, serif;
   line-height: 1.55;
 }
 
@@ -130,6 +158,11 @@ body {
 
 .font-display {
   font-family: var(--font-display);
+  letter-spacing: -0.015em;
+}
+
+.font-hero {
+  font-family: var(--font-hero);
 }
 
 .font-mono-tabular {
@@ -141,16 +174,32 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* Subtle Aurora & Noise Atmosphere */
+/* Primary CTA Button with WCAG AA high-contrast dark ink on warm yellow */
+.btn-primary-waqti {
+  background-color: var(--accent-primary);
+  color: var(--accent-ink);
+  font-weight: 700;
+  box-shadow: 0 2px 10px var(--accent-glow);
+}
+.btn-primary-waqti:hover {
+  background-color: var(--accent-strong);
+  color: #FFFFFF;
+}
+.dark .btn-primary-waqti:hover {
+  background-color: var(--accent-strong);
+  color: var(--accent-ink);
+}
+
+/* Subtle Warm Honey & Cream Aurora Atmosphere */
 .waqti-aurora {
   background-color: var(--bg-canvas);
   background-image:
-    radial-gradient(circle at 18% 12%, var(--accent-soft), transparent 42%),
-    radial-gradient(circle at 82% 18%, rgba(99, 102, 241, 0.08), transparent 45%),
-    radial-gradient(circle at 50% 88%, var(--accent-soft), transparent 50%);
+    radial-gradient(circle at 16% 10%, var(--accent-soft), transparent 40%),
+    radial-gradient(circle at 84% 16%, rgba(217, 180, 74, 0.08), transparent 42%),
+    radial-gradient(circle at 50% 90%, var(--accent-soft), transparent 48%);
 }
 
-/* Custom Scrollbar */
+/* Custom Warm Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -163,6 +212,21 @@ body {
 ::-webkit-scrollbar-thumb {
   background: var(--border-strong);
   border-radius: 9999px;
+}
+
+/* Print Stylesheet for Timetable & Schedule PDF Export */
+@media print {
+  aside, header, nav, .no-print {
+    display: none !important;
+  }
+  body, .waqti-aurora {
+    background: #FFFFFF !important;
+    color: #000000 !important;
+  }
+  main {
+    max-width: 100% !important;
+    padding: 0 !important;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

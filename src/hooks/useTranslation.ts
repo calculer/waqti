@@ -6,53 +6,62 @@ import {
   formatTimeDisplay,
   formatTimeRange,
   getDirection,
-  t as translate,
-  type TranslationKey,
+  t as translateRaw,
 } from '../lib/i18n';
 
 export function useTranslation() {
-  const language = useWaqtiStore((s) => s.settings.language);
+  const lang = useWaqtiStore((s) => s.settings.language);
   const digitsStyle = useWaqtiStore((s) => s.settings.digitsStyle);
   const timeFormat = useWaqtiStore((s) => s.settings.timeFormat);
-  const dir = getDirection(language);
 
   const t = useCallback(
-    (key: TranslationKey, params?: Record<string, string | number>) =>
-      translate(language, key, params, digitsStyle),
-    [language, digitsStyle]
+    (key: string, params?: Record<string, string | number>): string => {
+      return translateRaw(lang, key, params, digitsStyle);
+    },
+    [lang, digitsStyle]
   );
 
   const digits = useCallback(
-    (val: string | number) => formatDigits(val, language, digitsStyle),
-    [language, digitsStyle]
-  );
-
-  const plural = useCallback(
-    (category: 'days' | 'hours' | 'tasks', count: number) =>
-      formatPlural(language, category, count, digitsStyle),
-    [language, digitsStyle]
+    (value: string | number): string => {
+      return formatDigits(value, lang, digitsStyle);
+    },
+    [lang, digitsStyle]
   );
 
   const formatTime = useCallback(
-    (timeStr: string) => formatTimeDisplay(timeStr, timeFormat, language, digitsStyle),
-    [timeFormat, language, digitsStyle]
+    (timeStr: string): string => {
+      return formatTimeDisplay(timeStr, timeFormat, lang, digitsStyle);
+    },
+    [timeFormat, lang, digitsStyle]
   );
 
   const formatRange = useCallback(
-    (startTime: string, endTime: string) =>
-      formatTimeRange(startTime, endTime, timeFormat, language, digitsStyle),
-    [timeFormat, language, digitsStyle]
+    (startTime: string, endTime: string): string => {
+      return formatTimeRange(startTime, endTime, timeFormat, lang, digitsStyle);
+    },
+    [timeFormat, lang, digitsStyle]
   );
+
+  const plural = useCallback(
+    (category: 'days' | 'hours' | 'tasks' | 'alarms', count: number): string => {
+      return formatPlural(lang, category, count, digitsStyle);
+    },
+    [lang, digitsStyle]
+  );
+
+  const dir = getDirection(lang);
 
   return {
     t,
-    lang: language,
+    lang,
+    language: lang,
     dir,
+    isRTL: dir === 'rtl',
     digitsStyle,
     timeFormat,
     digits,
-    plural,
     formatTime,
     formatRange,
+    plural,
   };
 }

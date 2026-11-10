@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  BellRing,
   BookOpen,
   Calendar,
   CheckSquare,
@@ -15,11 +16,12 @@ import {
 import { useWaqtiStore } from '../store/useWaqtiStore';
 import { useTranslation } from '../hooks/useTranslation';
 import type { NavSection } from '../types';
+import type { QuickAddTab } from './QuickAddModal';
 
 interface CommandPaletteProps {
   isOpen: boolean;
   onClose: () => void;
-  onOpenQuickAdd: (tab?: 'task' | 'exam' | 'slot' | 'habit') => void;
+  onOpenQuickAdd: (tab?: QuickAddTab) => void;
 }
 
 export const CommandPalette: React.FC<CommandPaletteProps> = ({
@@ -33,6 +35,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   const subjects = useWaqtiStore((s) => s.subjects);
   const exams = useWaqtiStore((s) => s.exams);
   const tasks = useWaqtiStore((s) => s.tasks);
+  const alarms = useWaqtiStore((s) => s.alarms);
 
   useEffect(() => {
     if (isOpen) setQuery('');
@@ -46,6 +49,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       { id: 'exams', label: t('nav.exams'), icon: <GraduationCap className="w-4 h-4" /> },
       { id: 'lessons', label: t('nav.lessons'), icon: <CheckSquare className="w-4 h-4" /> },
       { id: 'calendar', label: t('nav.calendar'), icon: <Calendar className="w-4 h-4" /> },
+      { id: 'alarms', label: t('nav.alarms'), icon: <BellRing className="w-4 h-4" /> },
       { id: 'focus', label: t('nav.focus'), icon: <Timer className="w-4 h-4" /> },
       { id: 'habits', label: t('nav.habits'), icon: <Flame className="w-4 h-4" /> },
       { id: 'settings', label: t('nav.settings'), icon: <Settings className="w-4 h-4" /> },
@@ -118,8 +122,22 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       }
     }
 
-    return list.slice(0, 10);
-  }, [query, navItems, subjects, exams, tasks, setActiveNav, onClose, t]);
+    for (const al of alarms) {
+      if (!q || al.title.toLowerCase().includes(q)) {
+        list.push({
+          id: `alarm-${al.id}`,
+          title: al.title,
+          subtitle: `${t('nav.alarms')} · ${al.time}`,
+          action: () => {
+            setActiveNav('alarms');
+            onClose();
+          },
+        });
+      }
+    }
+
+    return list.slice(0, 12);
+  }, [query, navItems, subjects, exams, tasks, alarms, setActiveNav, onClose, t]);
 
   if (!isOpen) return null;
 
@@ -185,6 +203,16 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
             className="rounded-lg bg-[var(--bg-surface)] border border-[var(--border-subtle)] px-2.5 py-1 text-xs font-medium text-[var(--text-primary)] hover:border-[var(--accent-primary)] transition whitespace-nowrap"
           >
             + {t('timetable.addSlot')}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              onOpenQuickAdd('alarm');
+            }}
+            className="rounded-lg bg-[var(--bg-surface)] border border-[var(--border-subtle)] px-2.5 py-1 text-xs font-medium text-[var(--text-primary)] hover:border-[var(--accent-primary)] transition whitespace-nowrap"
+          >
+            + {t('alarms.add')}
           </button>
         </div>
 

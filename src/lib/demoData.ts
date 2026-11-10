@@ -1,6 +1,8 @@
 import { getLocalDateString, getWeekDayIndex, shiftDateString } from './dates';
 import type {
+  AlarmReminder,
   Exam,
+  Flashcard,
   FocusSessionLog,
   Habit,
   Language,
@@ -21,9 +23,14 @@ export interface DemoDataset {
   tasks: StudyTask[];
   habits: Habit[];
   focusSessions: FocusSessionLog[];
+  alarms: AlarmReminder[];
+  flashcards: Flashcard[];
 }
 
-export function buildSeedDemoData(lang: Language = 'ar', todayStr: string = getLocalDateString()): DemoDataset {
+export function buildSeedDemoData(
+  lang: Language = 'ar',
+  todayStr: string = getLocalDateString()
+): DemoDataset {
   const todayDow = getWeekDayIndex(todayStr);
   const tomorrowDow = ((todayDow + 1) % 7) as WeekDay;
   const dayAfterDow = ((todayDow + 2) % 7) as WeekDay;
@@ -31,67 +38,88 @@ export function buildSeedDemoData(lang: Language = 'ar', todayStr: string = getL
 
   const isAr = lang === 'ar';
   const isFr = lang === 'fr';
+  const nowIso = new Date().toISOString();
 
   const subjects: Subject[] = [
     {
       id: 'subj-math',
-      name: isAr ? 'الرياضيات المتقدمة والتحليل' : isFr ? 'Mathématiques & Analyse' : 'Advanced Mathematics',
-      color: 'violet',
+      name: isAr
+        ? 'الرياضيات المتقدمة والتحليل'
+        : isFr
+          ? 'Mathématiques & Analyse'
+          : 'Advanced Mathematics',
+      color: 'honey',
       icon: 'Sigma',
       teacher: isAr ? 'د. طارق المنصور' : isFr ? 'Prof. Laurent Moreau' : 'Dr. Tariq Al-Mansour',
       room: isAr ? 'مدرج ابن الهيثم B2' : 'Amphi Euler B2',
       coefficient: 6,
       weeklyGoalHours: 8,
       archived: false,
-      createdAt: new Date().toISOString(),
+      createdAt: nowIso,
     },
     {
       id: 'subj-phys',
-      name: isAr ? 'الفيزياء الكمّية والميكانيك' : isFr ? 'Physique Quantique & Mécanique' : 'Quantum Physics & Mechanics',
-      color: 'sky',
+      name: isAr
+        ? 'الفيزياء الكمّية والميكانيك'
+        : isFr
+          ? 'Physique Quantique & Mécanique'
+          : 'Quantum Physics & Mechanics',
+      color: 'slate',
       icon: 'Atom',
       teacher: isAr ? 'د. سلمى الخطيب' : isFr ? 'Dr. Claire Dubois' : 'Dr. Salma Al-Khatib',
       room: isAr ? 'مختبر الفيزياء 104' : 'Labo Curie 104',
       coefficient: 5,
       weeklyGoalHours: 6,
       archived: false,
-      createdAt: new Date().toISOString(),
+      createdAt: nowIso,
     },
     {
       id: 'subj-cs',
-      name: isAr ? 'هندسة الخوارزميات والذكاء الاصطناعي' : isFr ? 'Algorithmique & Structures' : 'Algorithms & Systems Design',
-      color: 'emerald',
+      name: isAr
+        ? 'هندسة الخوارزميات والذكاء الاصطناعي'
+        : isFr
+          ? 'Algorithmique & Structures'
+          : 'Algorithms & Systems Design',
+      color: 'sage',
       icon: 'Code2',
       teacher: isAr ? 'م. كريم بن علي' : isFr ? 'Prof. Karim Benali' : 'Prof. Karim Benali',
       room: isAr ? 'قاعة الخوارزمي 301' : 'Salle Turing 301',
       coefficient: 5,
       weeklyGoalHours: 7,
       archived: false,
-      createdAt: new Date().toISOString(),
+      createdAt: nowIso,
     },
     {
       id: 'subj-lit',
-      name: isAr ? 'الفلسفة والفكر النقدي' : isFr ? 'Philosophie & Épistémologie' : 'Philosophy & Critical Thought',
-      color: 'amber',
+      name: isAr
+        ? 'الفلسفة والفكر النقدي'
+        : isFr
+          ? 'Philosophie & Épistémologie'
+          : 'Philosophy & Critical Thought',
+      color: 'terracotta',
       icon: 'BookOpen',
       teacher: isAr ? 'أ. نادية الشامي' : isFr ? 'Mme. Nadia Chami' : 'Prof. Nadia Chami',
       room: isAr ? 'قاعة ابن رشد 12' : 'Salle Averroès 12',
       coefficient: 3,
       weeklyGoalHours: 4,
       archived: false,
-      createdAt: new Date().toISOString(),
+      createdAt: nowIso,
     },
     {
       id: 'subj-bio',
-      name: isAr ? 'الكيمياء الحيوية والجزيئية' : isFr ? 'Biochimie Moléculaire' : 'Molecular Biochemistry',
-      color: 'rose',
+      name: isAr
+        ? 'الكيمياء الحيوية والجزيئية'
+        : isFr
+          ? 'Biochimie Moléculaire'
+          : 'Molecular Biochemistry',
+      color: 'plum',
       icon: 'Microscope',
       teacher: isAr ? 'د. ياسين الفاسي' : isFr ? 'Dr. Yassine El-Fassi' : 'Dr. Yassine El-Fassi',
       room: isAr ? 'مختبر الرازي 205' : 'Labo Pasteur 205',
       coefficient: 4,
       weeklyGoalHours: 5,
       archived: false,
-      createdAt: new Date().toISOString(),
+      createdAt: nowIso,
     },
   ];
 
@@ -362,7 +390,7 @@ export function buildSeedDemoData(lang: Language = 'ar', todayStr: string = getL
       dueTime: '22:00',
       priority: 'medium',
       status: 'done',
-      completedAt: new Date().toISOString(),
+      completedAt: nowIso,
       subtasks: [],
       recurrence: 'none',
     },
@@ -415,14 +443,14 @@ export function buildSeedDemoData(lang: Language = 'ar', todayStr: string = getL
           ? 'Révision active Anki (25 min)'
           : '25-min Active Recall & Flashcards',
       icon: 'Brain',
-      color: 'violet',
+      color: 'honey',
       frequencyType: 'daily',
       targetDays: [0, 1, 2, 3, 4, 5, 6],
       timesPerWeek: 7,
-      reminderTime: '19:00',
+      reminderTimes: ['19:00'],
       completedDates: last10Days,
       bestStreak: 14,
-      createdAt: new Date().toISOString(),
+      createdAt: nowIso,
     },
     {
       id: 'hab-2',
@@ -432,14 +460,14 @@ export function buildSeedDemoData(lang: Language = 'ar', todayStr: string = getL
           ? 'Synthèse des cours du jour'
           : 'Synthesize Daily Lecture Notes',
       icon: 'BookCheck',
-      color: 'emerald',
+      color: 'sage',
       frequencyType: 'daily',
       targetDays: [0, 1, 2, 3, 4, 5, 6],
       timesPerWeek: 7,
-      reminderTime: '20:30',
+      reminderTimes: ['20:30'],
       completedDates: last6Days,
       bestStreak: 9,
-      createdAt: new Date().toISOString(),
+      createdAt: nowIso,
     },
     {
       id: 'hab-3',
@@ -449,14 +477,131 @@ export function buildSeedDemoData(lang: Language = 'ar', todayStr: string = getL
           ? 'Hydratation 2L & marche sans écran'
           : '2L Hydration & Screen-Free Walk',
       icon: 'Sparkles',
-      color: 'sky',
+      color: 'slate',
       frequencyType: 'times_per_week',
       targetDays: [0, 1, 2, 3, 4, 5, 6],
       timesPerWeek: 5,
-      reminderTime: '17:00',
-      completedDates: [todayStr, shiftDateString(todayStr, -1), shiftDateString(todayStr, -2), shiftDateString(todayStr, -4)],
+      reminderTimes: ['17:00'],
+      completedDates: [
+        todayStr,
+        shiftDateString(todayStr, -1),
+        shiftDateString(todayStr, -2),
+        shiftDateString(todayStr, -4),
+      ],
       bestStreak: 7,
-      createdAt: new Date().toISOString(),
+      createdAt: nowIso,
+    },
+  ];
+
+  const alarms: AlarmReminder[] = [
+    {
+      id: 'alarm-1',
+      title: isAr
+        ? 'جلسة مراجعة المساء (الرياضيات)'
+        : isFr
+          ? 'Session de révision du soir (Maths)'
+          : 'Evening Study & Active Recall Session',
+      note: isAr
+        ? 'مراجعة تمارين المعادلات التفاضلية لمدة ٤٥ دقيقة'
+        : isFr
+          ? '45 minutes sur les équations différentielles'
+          : '45-minute deep focus on differential equations',
+      date: todayStr,
+      time: '19:00',
+      recurrence: 'daily',
+      daysOfWeek: [0, 1, 2, 3, 4, 5, 6],
+      linkedType: 'habit',
+      linkedId: 'hab-1',
+      sound: 'soft_bell',
+      vibrate: true,
+      snoozeMinutes: 10,
+      leadMinutes: 0,
+      enabled: true,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    },
+    {
+      id: 'alarm-2',
+      title: isAr
+        ? 'منبه الاستيقاظ الصباحي والتهيئة الذهنية'
+        : isFr
+          ? 'Réveil matinal & préparation'
+          : 'Morning Wake-up & Timetable Check',
+      note: isAr ? 'بداية هادئة قبل المحاضرات' : 'Calm start before morning lectures',
+      date: todayStr,
+      time: '07:15',
+      recurrence: 'weekdays',
+      daysOfWeek: [1, 2, 3, 4, 5],
+      linkedType: 'class',
+      linkedId: 'slot-today-1',
+      sound: 'morning_chime',
+      vibrate: true,
+      snoozeMinutes: 5,
+      leadMinutes: 0,
+      enabled: true,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    },
+    {
+      id: 'alarm-3',
+      title: isAr
+        ? 'تذكير الامتحان الفصلي للرياضيات'
+        : isFr
+          ? 'Rappel : Devoir Surveillé de Maths'
+          : 'Math Midterm Exam Final Check',
+      note: isAr ? 'تجهيز الآلة الحاسبة والأدوات' : 'Prepare exam room & formula sheet',
+      date: shiftDateString(todayStr, 3),
+      time: '09:00',
+      recurrence: 'once',
+      daysOfWeek: [],
+      linkedType: 'exam',
+      linkedId: 'exam-1',
+      sound: 'marimba',
+      vibrate: true,
+      snoozeMinutes: 15,
+      leadMinutes: 60,
+      enabled: true,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    },
+  ];
+
+  const flashcards: Flashcard[] = [
+    {
+      id: 'fc-1',
+      subjectId: 'subj-math',
+      front: isAr
+        ? 'ما هي صيغة التكامل بالتجزئة؟'
+        : isFr
+          ? 'Quelle est la formule d’intégration par parties ?'
+          : 'What is the Integration by Parts formula?',
+      back: '∫ u dv = u·v − ∫ v du',
+      box: 3,
+      nextReviewDate: todayStr,
+    },
+    {
+      id: 'fc-2',
+      subjectId: 'subj-phys',
+      front: isAr
+        ? 'ما هي مستويات الطاقة في بئر كمومي لا نهائي بعرض L؟'
+        : isFr
+          ? 'Quels sont les niveaux d’énergie dans un puits infini de largeur L ?'
+          : 'What are the energy eigenvalues in a 1D infinite potential well of width L?',
+      back: 'E_n = (n² · π² · ℏ²) / (2m · L²)',
+      box: 2,
+      nextReviewDate: todayStr,
+    },
+    {
+      id: 'fc-3',
+      subjectId: 'subj-cs',
+      front: isAr
+        ? 'ما هو التعقيد الزمني لخوارزمية ديكسترا باستخدام Binary Heap؟'
+        : isFr
+          ? 'Quelle est la complexité de Dijkstra avec un tas binaire ?'
+          : 'What is the time complexity of Dijkstra’s algorithm with a binary heap?',
+      back: 'O((V + E) log V)',
+      box: 4,
+      nextReviewDate: shiftDateString(todayStr, 2),
     },
   ];
 
@@ -517,5 +662,7 @@ export function buildSeedDemoData(lang: Language = 'ar', todayStr: string = getL
     tasks,
     habits,
     focusSessions,
+    alarms,
+    flashcards,
   };
 }

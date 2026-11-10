@@ -4,14 +4,21 @@ import {
   calculateHabitStreak,
   computeExamCountdown,
   computeRemainingTimerMs,
+  computeTargetExamGrade,
   detectSlotOverlaps,
+  doesAlarmMatchDate,
+  findMissedAlarms,
   getLocalDateString,
   getWeekDates,
+  isAlarmDueNow,
   isValidTimeOrder,
+  packOverlappingEvents,
   parseLocalDateTime,
+  parseQuickCaptureInput,
   shiftDateString,
+  summarizeMonthCellEvents,
 } from './dates';
-import type { ActiveTimerState, TimetableSlot } from '../types';
+import type { ActiveTimerState, AlarmReminder, Subject, TimetableSlot } from '../types';
 
 test('parseLocalDateTime parses YYYY-MM-DD in local time without UTC day shift', () => {
   const d = parseLocalDateTime('2026-11-10', '08:30');
@@ -140,4 +147,115 @@ test('calculateHabitStreak computes consecutive day streaks accurately', () => {
   assert.equal(calculateHabitStreak(dates, '2026-11-10'), 3);
   assert.equal(calculateHabitStreak(dates, '2026-11-11'), 3); // Still valid before today ends
   assert.equal(calculateHabitStreak(dates, '2026-11-12'), 0); // Broken streak
+});
+
+test('summarizeMonthCellEvents caps visible dots to 3 and computes +N overflow accurately', () => {
+  const fiveEvents = [
+    { id: '1', type: 'exam', title: 'Exam 1' },
+    { id: '2', type: 'class', title: 'Class 1' },
+    { id: '3', type: 'task', title: 'Task 1' },
+    { id: '4', type: 'alarm', title: 'Alarm 1' },
+    { id: '5', type: 'habit', title: 'Habit 1' },
+  ];
+  const summary = summarizeMonthCellEvents(fiveEvents, 3);
+  assert.equal(summary.visibleDots.length, 3);
+  assert.equal(summary.overflowCount, 2);
+});
+
+test('packOverlappingEvents packs overlapping time blocks side-by-side without collisions', () => {
+  const events = [
+    { id: 'a', startTime: '09:00', endTime: '10:30' },
+    { id: 'b', startTime: '09:30', endTime: '11:00' },
+    { id: 'c', startTime: '11:00', endTime: '12:00' }, // Adjacent to b, should start new group
+  ];
+  const packed = packOverlappingEvents(events);
+  const a = packed.find((x) => x.id === 'a')!;
+  const b = packed.find((x) => x.id === 'b')!;
+  const c = packed.find((x) => x.id === 'c')!;
+
+  assert.equal(a.totalCols, 2);
+  assert.equal(b.totalCols, 2);
+  assert.notEqual(a.colIndex, b.colIndex);
+  assert.equal(c.totalCols, 1);
+  assert.equal(c.colIndex, 0);
+});
+
+test('doesAlarmMatchDate, isAlarmDueNow, and findMissedAlarms handle alarms and snooze accurately', () => {
+  const alarm: AlarmReminder = {
+    id: 'alm-1',
+    title: 'Morning Review',
+    date: '2026-11-10',
+    time: '08:00',
+    recurrence: 'weekdays',
+    daysOfWeek: [1, 2, 3, 4, 5],
+    leadMinutes: 0,
+    sound: 'soft_bell',
+    vibrate: true,
+    snoozeMinutes: 10,
+    enabled: true,
+    linkedType: 'custom',
+    createdAt: '2026-11-01T00:00:00.000Z',
+    updatedAt: '2026-11-01T00:00:00.000Z',
+  };
+
+  // 2026-11-10 is Tuesday (weekday) -> matches
+  assert.equal(doesAlarmMatchDate(alarm, '2026-11-10'), true);
+  // 2026-11-08 is Sunday -> does not match weekdays
+  assert.equal(doesAlarmMatchDate(alarm, '2026-11-08'), false);
+
+  // Exact due check at 08:00 on 2026-11-10
+  const dueCheck = isAlarmDueNow(alarm, '2026-11-10', '08:00', Date.now());
+  assert.equal(dueCheck, true);
+
+  // Already fired -> not due again
+  const alreadyFiredAlarm: AlarmReminder = {
+    ...alarm,
+    lastFiredDateKey: '2026-11-10T08:00',
+  };
+  assert.equal(isAlarmDueNow(alreadyFiredAlarm, '2026-11-10', '08:00', Date.now()), false);
+
+  // Missed alarm when checked between 07:50 and 08:15 on 2026-11-10
+  const startWindowMs = parseLocalDateTime('2026-11-10', '07:50').getTime();
+  const endWindowMs = parseLocalDateTime('2026-11-10', '08:15').getTime();
+  const missed = findMissedAlarms([alarm], startWindowMs, endWindowMs);
+  assert.equal(missed.length, 1);
+  assert.equal(missed[0].alarmId, 'alm-1');
+});
+
+test('computeTargetExamGrade calculates required score on next exam accurately', () => {
+  const res = computeTargetExamGrade(14.5, 4, 16, 2, 20);
+  // Current points = 14.5 * 4 = 58. Target points = 16 * 6 = 96. Needed = (96 - 58) / 2 = 19/20
+  assert.equal(res.neededGrade, 19);
+  assert.equal(res.achievable, true);
+});
+
+test('parseQuickCaptureInput parses English, French, and Arabic natural language inputs', () => {
+  const mockSubjects: Subject[] = [
+    {
+      id: 'subj-math',
+      name: 'Mathematics',
+      color: 'honey',
+      icon: 'BookOpen',
+      teacher: 'Dr. Rami',
+      room: 'B201',
+      coefficient: 5,
+      weeklyGoalHours: 6,
+      archived: false,
+      createdAt: '2026-11-01T00:00:00.000Z',
+    },
+  ];
+  const examRes = parseQuickCaptureInput('Mathematics exam tomorrow 09:30', 'en', '2026-11-10', mockSubjects);
+  assert.equal(examRes.kind, 'exam');
+  assert.equal(examRes.date, '2026-11-11');
+  assert.equal(examRes.time, '09:30');
+  assert.equal(examRes.subjectId, 'subj-math');
+
+  const alarmRes = parseQuickCaptureInput('Remind me 18:30 review flashcards', 'en', '2026-11-10', mockSubjects);
+  assert.equal(alarmRes.kind, 'alarm');
+  assert.equal(alarmRes.time, '18:30');
+
+  const arExam = parseQuickCaptureInput('امتحان فيزياء غداً 10:00', 'ar', '2026-11-10', mockSubjects);
+  assert.equal(arExam.kind, 'exam');
+  assert.equal(arExam.date, '2026-11-11');
+  assert.equal(arExam.time, '10:00');
 });

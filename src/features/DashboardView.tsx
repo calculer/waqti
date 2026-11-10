@@ -1,15 +1,19 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  BatteryCharging,
   BookOpen,
   CheckCircle2,
   Circle,
   Clock,
   Flame,
-  GraduationCap,
   Plus,
+  Send,
+  Shuffle,
+  Smile,
   Sparkles,
   Timer,
   Trash2,
+  Wand2,
 } from 'lucide-react';
 import { useWaqtiStore } from '../store/useWaqtiStore';
 import { useTranslation } from '../hooks/useTranslation';
@@ -20,18 +24,23 @@ import {
   formatLocalizedDate,
   getLocalTimeString,
   getWeekDayIndex,
+  parseQuickCaptureInput,
   timeToMinutes,
 } from '../lib/dates';
-import { SUBJECT_COLORS } from '../lib/colors';
+import { getSubjectColor } from '../lib/colors';
+import type { QuickAddTab } from '../components/QuickAddModal';
+import type { MoodCheckIn } from '../types';
 
 interface DashboardViewProps {
-  onOpenQuickAdd: (tab?: 'task' | 'exam' | 'slot' | 'habit') => void;
+  onOpenQuickAdd: (tab?: QuickAddTab) => void;
   onOpenOnboarding: () => void;
+  quickCaptureTrigger?: number;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
   onOpenQuickAdd,
   onOpenOnboarding,
+  quickCaptureTrigger = 0,
 }) => {
   const { t, lang, digitsStyle, timeFormat, digits, formatTime, formatRange, plural } =
     useTranslation();
@@ -44,13 +53,33 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const tasks = useWaqtiStore((s) => s.tasks);
   const habits = useWaqtiStore((s) => s.habits);
   const focusSessions = useWaqtiStore((s) => s.focusSessions);
+  const dayPlan = useWaqtiStore((s) => s.dayPlan);
+  const moodCheckIns = useWaqtiStore((s) => s.moodCheckIns);
+
   const updateTask = useWaqtiStore((s) => s.updateTask);
+  const addTask = useWaqtiStore((s) => s.addTask);
+  const addExam = useWaqtiStore((s) => s.addExam);
+  const addAlarm = useWaqtiStore((s) => s.addAlarm);
   const toggleHabitDate = useWaqtiStore((s) => s.toggleHabitDate);
   const setActiveNav = useWaqtiStore((s) => s.setActiveNav);
   const clearAllData = useWaqtiStore((s) => s.clearAllData);
   const refreshTodayIfNeeded = useWaqtiStore((s) => s.refreshTodayIfNeeded);
+  const generateSmartDayPlan = useWaqtiStore((s) => s.generateSmartDayPlan);
+  const toggleDayPlanBlock = useWaqtiStore((s) => s.toggleDayPlanBlock);
+  const clearDayPlan = useWaqtiStore((s) => s.clearDayPlan);
+  const setMoodCheckIn = useWaqtiStore((s) => s.setMoodCheckIn);
 
   const [now, setNow] = useState<Date>(() => new Date());
+  const [quickCaptureText, setQuickCaptureText] = useState('');
+  const [quickCaptureFeedback, setQuickCaptureFeedback] = useState('');
+  const [shuffleSeed, setShuffleSeed] = useState(1);
+  const captureInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (quickCaptureTrigger > 0) {
+      captureInputRef.current?.focus();
+    }
+  }, [quickCaptureTrigger]);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -130,6 +159,66 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     ? formatHijriDate(todayStr, lang, digitsStyle)
     : '';
 
+  const todayMoodEntry = useMemo(
+    () => moodCheckIns.find((m) => m.date === todayStr) ?? null,
+    [moodCheckIns, todayStr]
+  );
+
+  const handleQuickCaptureSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!quickCaptureText.trim()) return;
+
+    const parsed = parseQuickCaptureInput(quickCaptureText, lang, todayStr, subjects);
+    if (parsed.kind === 'exam') {
+      const subj = subjects.find((s) => s.id === parsed.subjectId);
+      addExam({
+        title: parsed.title,
+        subjectId: parsed.subjectId,
+        type: 'examen',
+        date: parsed.date,
+        startTime: parsed.time,
+        durationMinutes: 90,
+        room: subj?.room ?? 'Room A',
+        coefficient: subj?.coefficient ?? 4,
+        topics: [],
+        priority: 'high',
+        reminderOffsetsMinutes: [1440],
+        readinessScore: 60,
+      });
+    } else if (parsed.kind === 'alarm') {
+      addAlarm({
+        title: parsed.title,
+        date: parsed.date,
+        time: parsed.time,
+        recurrence: 'once',
+        daysOfWeek: [],
+        linkedType: 'custom',
+        sound: settings.defaultAlarmSound,
+        vibrate: settings.alarmVibration,
+        snoozeMinutes: settings.defaultSnoozeMinutes,
+        leadMinutes: 0,
+        enabled: true,
+      });
+    } else {
+      addTask({
+        title: parsed.title,
+        subjectId: parsed.subjectId,
+        dueDate: parsed.date,
+        dueTime: parsed.time,
+        priority: 'high',
+        status: 'todo',
+        subtasks: [],
+        recurrence: 'none',
+      });
+    }
+
+    setQuickCaptureText('');
+    setQuickCaptureFeedback(
+      `${parsed.kind.toUpperCase()} · ${parsed.date} ${parsed.time}`
+    );
+    setTimeout(() => setQuickCaptureFeedback(''), 3000);
+  };
+
   return (
     <div className="space-y-6">
       {/* Demo Workspace Bar */}
@@ -159,13 +248,47 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       )}
 
+      {/* Natural-Language Quick Capture Bar (Shortcut: N) */}
+      <form
+        onSubmit={handleQuickCaptureSubmit}
+        className="rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-surface)] p-3 flex flex-wrap sm:flex-nowrap items-center gap-3 shadow-xs"
+      >
+        <span className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent-soft)] px-2.5 py-1 text-xs font-bold text-[var(--accent-primary)] shrink-0">
+          <Wand2 className="h-3.5 w-3.5" />
+          <span>N</span>
+        </span>
+        <input
+          ref={captureInputRef}
+          type="text"
+          value={quickCaptureText}
+          onChange={(e) => setQuickCaptureText(e.target.value)}
+          placeholder={t('dashboard.quickCapturePlaceholder')}
+          className="flex-1 min-w-[200px] bg-transparent text-xs sm:text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none"
+        />
+        {quickCaptureFeedback && (
+          <span
+            dir="ltr"
+            className="text-[11px] font-mono font-bold text-emerald-600 dark:text-emerald-400 shrink-0"
+          >
+            ✓ {quickCaptureFeedback}
+          </span>
+        )}
+        <button
+          type="submit"
+          className="inline-flex items-center gap-1.5 rounded-xl btn-primary-waqti px-3.5 py-2 text-xs font-semibold shrink-0"
+        >
+          <Send className="h-3.5 w-3.5" />
+          <span>{t('dashboard.quickCaptureHint')}</span>
+        </button>
+      </form>
+
       {/* Hero Section: Time-of-day Greeting, Live Expressive Clock, Next Event & Daily Momentum */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
         <div className="lg:col-span-7 rounded-3xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6 md:p-7 flex flex-col justify-between relative overflow-hidden">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <p className="text-xs font-medium text-[var(--accent-primary)] mb-1">
-                { formattedGregorianDate }
+                {formattedGregorianDate}
                 {formattedHijri ? ` · ${formattedHijri}` : ''}
               </p>
               <h1 className="text-2xl md:text-3xl font-bold font-display text-[var(--text-primary)] tracking-tight">
@@ -181,9 +304,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               dir="ltr"
               className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-4 py-3 text-end"
             >
-              <div className="text-2xl md:text-3xl font-bold font-mono-tabular tracking-tight text-[var(--text-primary)]">
+              <div className="text-2xl md:text-3xl font-bold font-display tabular-nums tracking-tight text-[var(--text-primary)]">
                 {formatTime(currentHHmm)}
-                <span className="text-sm text-[var(--text-muted)] ms-1">
+                <span className="text-sm text-[var(--text-muted)] ms-1 font-mono">
                   :{digits(currentSeconds)}
                 </span>
               </div>
@@ -197,19 +320,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div className="mt-6 grid grid-cols-3 gap-3 pt-5 border-t border-[var(--border-subtle)]">
             <div>
               <div className="text-xs text-[var(--text-muted)]">{t('dashboard.tasksCompleted')}</div>
-              <div className="mt-1 text-xl font-bold font-mono-tabular text-[var(--text-primary)]">
+              <div className="mt-1 text-xl font-bold font-display tabular-nums text-[var(--text-primary)]">
                 {digits(completedTasksCount)}/{digits(totalTasksCount)}
               </div>
             </div>
             <div>
               <div className="text-xs text-[var(--text-muted)]">{t('dashboard.habitsChecked')}</div>
-              <div className="mt-1 text-xl font-bold font-mono-tabular text-[var(--text-primary)]">
+              <div className="mt-1 text-xl font-bold font-display tabular-nums text-[var(--text-primary)]">
                 {digits(checkedHabitsCount)}/{digits(habits.length)}
               </div>
             </div>
             <div>
               <div className="text-xs text-[var(--text-muted)]">{t('dashboard.focusMinutes')}</div>
-              <div className="mt-1 text-xl font-bold font-mono-tabular text-[var(--accent-primary)]">
+              <div className="mt-1 text-xl font-bold font-display tabular-nums text-[var(--accent-primary)]">
                 {digits(todayFocusMinutes)}m
               </div>
             </div>
@@ -298,11 +421,178 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <button
               type="button"
               onClick={() => setActiveNav('focus')}
-              className="flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-3.5 py-2 text-xs font-semibold text-white hover:opacity-95 transition whitespace-nowrap shrink-0"
+              className="flex items-center gap-1.5 rounded-xl btn-primary-waqti px-3.5 py-2 text-xs font-semibold transition whitespace-nowrap shrink-0"
             >
               <Timer className="h-3.5 w-3.5" />
               <span>{t('nav.focus')}</span>
             </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Smart "Plan My Day" Time-Blocked Generator + Daily Mood & Energy Check-in Row */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
+        {/* Smart Plan My Day Card */}
+        <div className="lg:col-span-7 rounded-3xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-[var(--accent-primary)]" />
+                <h2 className="text-base font-bold font-display text-[var(--text-primary)]">
+                  {t('dashboard.planMyDay')}
+                </h2>
+              </div>
+              <p className="text-xs text-[var(--text-secondary)] mt-0.5">
+                {t('dashboard.planMyDayDesc')}
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {dayPlan.length === 0 ? (
+                <button
+                  type="button"
+                  onClick={() => generateSmartDayPlan(0)}
+                  className="inline-flex items-center gap-1.5 rounded-xl btn-primary-waqti px-3.5 py-2 text-xs font-semibold"
+                >
+                  <Wand2 className="h-3.5 w-3.5" />
+                  <span>{t('dashboard.generatePlan')}</span>
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextSeed = shuffleSeed + 1;
+                      setShuffleSeed(nextSeed);
+                      generateSmartDayPlan(nextSeed);
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-1.5 text-xs font-semibold text-[var(--text-primary)] hover:border-[var(--accent-primary)]"
+                  >
+                    <Shuffle className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
+                    <span>{t('dashboard.shufflePlan')}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={clearDayPlan}
+                    className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-1.5 text-xs font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                  >
+                    {t('dashboard.clearPlan')}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+
+          {dayPlan.length > 0 && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+              {dayPlan.map((blk) => {
+                const subj = subjects.find((s) => s.id === blk.subjectId);
+                const cStyle = getSubjectColor(subj?.color ?? 'honey');
+                return (
+                  <button
+                    key={blk.id}
+                    type="button"
+                    onClick={() => toggleDayPlanBlock(blk.id)}
+                    className={`flex items-center justify-between gap-3 rounded-2xl border p-3 text-start transition ${
+                      blk.completed
+                        ? 'border-emerald-500/30 bg-emerald-500/10 opacity-75'
+                        : `${cStyle.softBg} ${cStyle.border}`
+                    }`}
+                  >
+                    <div className="min-w-0">
+                      <div
+                        dir="ltr"
+                        className="text-[11px] font-mono tabular-nums font-bold text-[var(--accent-primary)]"
+                      >
+                        {formatRange(blk.startTime, blk.endTime)}
+                      </div>
+                      <div
+                        className={`text-xs font-bold truncate mt-0.5 ${
+                          blk.completed
+                            ? 'line-through text-[var(--text-muted)]'
+                            : 'text-[var(--text-primary)]'
+                        }`}
+                      >
+                        {blk.title}
+                      </div>
+                    </div>
+                    {blk.completed ? (
+                      <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
+                    ) : (
+                      <Circle className="h-4 w-4 text-[var(--text-muted)] shrink-0" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* 1-Tap Daily Mood & Energy Check-in Card */}
+        <div className="lg:col-span-5 rounded-3xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6 flex flex-col justify-between space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Smile className="h-4 w-4 text-[var(--accent-primary)]" />
+              <h2 className="text-base font-bold font-display text-[var(--text-primary)]">
+                {t('dashboard.moodCheckIn')}
+              </h2>
+            </div>
+            <BatteryCharging className="h-4 w-4 text-[var(--text-muted)]" />
+          </div>
+
+          <div className="grid grid-cols-4 gap-2">
+            {(
+              [
+                { id: 'calm', label: t('dashboard.moodCalm'), icon: '🌿' },
+                { id: 'focused', label: t('dashboard.moodFocused'), icon: '🎯' },
+                { id: 'energized', label: t('dashboard.moodEnergized'), icon: '⚡' },
+                { id: 'tired', label: t('dashboard.moodTired'), icon: '🌙' },
+              ] as { id: MoodCheckIn['mood']; label: string; icon: string }[]
+            ).map((m) => {
+              const active = todayMoodEntry?.mood === m.id;
+              return (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => setMoodCheckIn(m.id, todayMoodEntry?.energy ?? 4)}
+                  className={`flex flex-col items-center justify-center gap-1 rounded-2xl border py-2.5 px-2 text-xs font-semibold transition ${
+                    active
+                      ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
+                      : 'border-[var(--border-subtle)] bg-[var(--bg-elevated)] text-[var(--text-secondary)]'
+                  }`}
+                >
+                  <span className="text-base">{m.icon}</span>
+                  <span className="truncate text-[11px]">{m.label}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="flex items-center justify-between gap-2 pt-2 border-t border-[var(--border-subtle)]">
+            <span className="text-xs font-medium text-[var(--text-secondary)]">
+              {t('dashboard.energyLevel')}
+            </span>
+            <div className="flex items-center gap-1.5">
+              {([1, 2, 3, 4, 5] as const).map((lvl) => {
+                const active = (todayMoodEntry?.energy ?? 4) >= lvl;
+                return (
+                  <button
+                    key={lvl}
+                    type="button"
+                    onClick={() =>
+                      setMoodCheckIn(todayMoodEntry?.mood ?? 'focused', lvl)
+                    }
+                    className={`h-6 w-7 rounded-lg text-xs font-mono tabular-nums font-bold transition ${
+                      active
+                        ? 'btn-primary-waqti'
+                        : 'bg-[var(--bg-elevated)] text-[var(--text-muted)] border border-[var(--border-subtle)]'
+                    }`}
+                  >
+                    {digits(lvl)}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
       </div>
@@ -345,7 +635,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <div className="space-y-3">
               {todaySlots.map((slot) => {
                 const subj = subjects.find((s) => s.id === slot.subjectId);
-                const colorStyle = SUBJECT_COLORS[subj?.color ?? 'violet'];
+                const colorStyle = getSubjectColor(subj?.color);
                 const startM = timeToMinutes(slot.startTime);
                 const endM = timeToMinutes(slot.endTime);
                 const isCurrent =

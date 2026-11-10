@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import {
+  Calculator,
   CheckCircle2,
   Circle,
   GraduationCap,
@@ -11,12 +12,13 @@ import { useWaqtiStore } from '../store/useWaqtiStore';
 import { useTranslation } from '../hooks/useTranslation';
 import {
   computeExamCountdown,
+  computeTargetExamGrade,
   formatLocalizedDate,
   isBefore,
   parseLocalDateTime,
   shiftDateString,
 } from '../lib/dates';
-import { SUBJECT_COLORS } from '../lib/colors';
+import { getSubjectColor } from '../lib/colors';
 import { EmptyHourglassIllustration } from '../components/WaqtiLogo';
 import type { Exam, ExamType, PriorityLevel } from '../types';
 
@@ -38,6 +40,7 @@ export const ExamsView: React.FC<{
   const [filter, setFilter] = useState<'upcoming' | 'past' | 'all'>('upcoming');
   const [subjectFilter, setSubjectFilter] = useState<string>('all');
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const [targetAvgInput, setTargetAvgInput] = useState<number>(16);
 
   const [title, setTitle] = useState('');
   const [subjectId, setSubjectId] = useState(subjects[0]?.id ?? '');
@@ -81,9 +84,9 @@ export const ExamsView: React.FC<{
       .sort((a, b) => a.countdown.totalMinutesRemaining - b.countdown.totalMinutesRemaining);
   }, [exams, now, lang, timeFormat, digitsStyle, filter, subjectFilter]);
 
-  const overallWeightedAverage = useMemo(() => {
+  const gradeStats = useMemo(() => {
     const graded = exams.filter((e) => e.grade !== undefined && (e.outOf ?? 20) > 0);
-    if (graded.length === 0) return null;
+    if (graded.length === 0) return { avg: 15, totalCoeff: 0, avgFormatted: null };
     let weightedSum = 0;
     let totalCoeff = 0;
     for (const g of graded) {
@@ -91,8 +94,28 @@ export const ExamsView: React.FC<{
       weightedSum += normalized20 * g.coefficient;
       totalCoeff += g.coefficient;
     }
-    return totalCoeff > 0 ? (weightedSum / totalCoeff).toFixed(2) : null;
+    const avg = totalCoeff > 0 ? weightedSum / totalCoeff : 0;
+    return {
+      avg,
+      totalCoeff,
+      avgFormatted: totalCoeff > 0 ? avg.toFixed(2) : null,
+    };
   }, [exams]);
+
+  const nextUpcomingExam = useMemo(() => {
+    return enrichedExams.find((item) => item.countdown.status !== 'passed')?.exam ?? null;
+  }, [enrichedExams]);
+
+  const targetSimResult = useMemo(() => {
+    const nextCoeff = nextUpcomingExam?.coefficient ?? 5;
+    return computeTargetExamGrade(
+      gradeStats.avg,
+      gradeStats.totalCoeff,
+      targetAvgInput,
+      nextCoeff,
+      20
+    );
+  }, [gradeStats.avg, gradeStats.totalCoeff, targetAvgInput, nextUpcomingExam]);
 
   const handleAddExam = (e: React.FormEvent) => {
     e.preventDefault();
@@ -132,6 +155,7 @@ export const ExamsView: React.FC<{
     });
 
     setTitle('');
+    setRoom('');
     setTopicsInput('');
     setConfirmPastExam(false);
     setIsAddOpen(false);
@@ -170,11 +194,11 @@ export const ExamsView: React.FC<{
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          {overallWeightedAverage && (
+          {gradeStats.avgFormatted && (
             <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-4 py-2 text-xs">
               <span className="text-[var(--text-muted)] me-2">{t('exams.overallAverage')}:</span>
               <strong dir="ltr" className="font-mono-tabular text-sm text-[var(--accent-primary)]">
-                {digits(overallWeightedAverage)}/20
+                {digits(gradeStats.avgFormatted)}/20
               </strong>
             </div>
           )}
@@ -186,11 +210,63 @@ export const ExamsView: React.FC<{
               setConfirmPastExam(false);
               setIsAddOpen((v) => !v);
             }}
-            className="flex items-center gap-2 rounded-xl bg-[var(--accent-primary)] px-4 py-2.5 text-xs font-semibold text-white shadow-sm hover:opacity-95 transition whitespace-nowrap"
+            className="flex items-center gap-2 rounded-xl btn-primary-waqti px-4 py-2.5 text-xs font-semibold shadow-sm transition whitespace-nowrap"
           >
             <Plus className="h-4 w-4" />
             <span>{t('exams.add')}</span>
           </button>
+        </div>
+      </div>
+
+      {/* Exam Target Grade Simulator Card */}
+      <div className="rounded-3xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div className="flex items-start gap-3.5">
+          <div className="rounded-2xl bg-[var(--accent-soft)] p-3 text-[var(--accent-primary)] shrink-0">
+            <Calculator className="h-5 w-5" />
+          </div>
+          <div>
+            <h2 className="text-sm font-bold font-display text-[var(--text-primary)]">
+              {t('exams.simulatorTitle')}
+            </h2>
+            <p className="text-xs text-[var(--text-secondary)] mt-0.5">
+              {t('exams.simulatorDesc')}
+              {nextUpcomingExam ? ` (${nextUpcomingExam.title})` : ''}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-4 w-full md:w-auto justify-between md:justify-end">
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-medium text-[var(--text-secondary)]">
+              {t('exams.targetAverage')}:
+            </label>
+            <input
+              type="number"
+              min={10}
+              max={20}
+              step={0.25}
+              value={targetAvgInput}
+              onChange={(e) => setTargetAvgInput(parseFloat(e.target.value || '16'))}
+              className="w-20 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-2.5 py-1.5 text-xs font-mono tabular-nums font-bold text-[var(--text-primary)]"
+            />
+          </div>
+
+          <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-4 py-2 flex items-center gap-2.5">
+            <span className="text-xs text-[var(--text-muted)]">{t('exams.neededGrade')}:</span>
+            <span
+              dir="ltr"
+              className={`text-sm font-bold font-mono tabular-nums ${
+                targetSimResult.achievable
+                  ? 'text-[var(--accent-primary)]'
+                  : 'text-amber-600 dark:text-amber-400'
+              }`}
+            >
+              {digits(targetSimResult.neededGrade)}/20
+            </span>
+            <span className="text-[11px] font-semibold text-[var(--text-secondary)]">
+              · {targetSimResult.achievable ? t('exams.achievable') : t('exams.unachievable')}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -266,7 +342,7 @@ export const ExamsView: React.FC<{
 
             <div>
               <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
-                Type
+                {t('exams.typeLabel')}
               </label>
               <select
                 value={type}
@@ -343,23 +419,41 @@ export const ExamsView: React.FC<{
             </div>
           </div>
 
-          <div>
-            <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
-              {t('exams.topics')}
-            </label>
-            <input
-              type="text"
-              value={topicsInput}
-              onChange={(e) => setTopicsInput(e.target.value)}
-              placeholder="Fourier Series, Laplace Transform, Boundary Problems"
-              className="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3.5 py-2.5 text-sm text-[var(--text-primary)]"
-            />
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="md:col-span-2">
+              <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
+                {t('exams.topics')}
+              </label>
+              <input
+                type="text"
+                value={topicsInput}
+                onChange={(e) => setTopicsInput(e.target.value)}
+                placeholder="Fourier Series, Laplace Transform, Boundary Problems"
+                className="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3.5 py-2.5 text-sm text-[var(--text-primary)]"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
+                {t('lessons.priorityLabel')}
+              </label>
+              <select
+                value={priority}
+                onChange={(e) => setPriority(e.target.value as PriorityLevel)}
+                className="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-2.5 text-sm text-[var(--text-primary)]"
+              >
+                {(['low', 'medium', 'high', 'critical'] as PriorityLevel[]).map((p) => (
+                  <option key={p} value={p}>
+                    {t(`exams.priority.${p}`)}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
           {errorMsg && (
             <div
               role="alert"
-              className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 text-xs font-medium text-amber-600 dark:text-amber-300"
+              className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 text-xs font-medium text-amber-700 dark:text-amber-300"
             >
               {errorMsg}
             </div>
@@ -375,7 +469,7 @@ export const ExamsView: React.FC<{
             </button>
             <button
               type="submit"
-              className="rounded-xl bg-[var(--accent-primary)] px-5 py-2 text-xs font-semibold text-white"
+              className="rounded-xl btn-primary-waqti px-5 py-2 text-xs font-semibold"
             >
               {t('common.save')}
             </button>
@@ -395,7 +489,7 @@ export const ExamsView: React.FC<{
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
           {enrichedExams.map(({ exam, countdown }) => {
             const subj = subjects.find((s) => s.id === exam.subjectId);
-            const colorStyle = SUBJECT_COLORS[subj?.color ?? 'violet'];
+            const colorStyle = getSubjectColor(subj?.color);
             const examRevisions = revisionSessions.filter((r) => r.examId === exam.id);
 
             const urgencyBorder =
@@ -409,7 +503,7 @@ export const ExamsView: React.FC<{
               countdown.urgency === 'critical'
                 ? 'text-rose-500'
                 : countdown.urgency === 'warning'
-                  ? 'text-amber-500'
+                  ? 'text-amber-600 dark:text-amber-400'
                   : 'text-[var(--accent-primary)]';
 
             return (
@@ -420,7 +514,6 @@ export const ExamsView: React.FC<{
                 <div>
                   <div className="flex items-start justify-between gap-4">
                     <div className="min-w-0">
-                      {/* Quiet unboxed metadata line */}
                       <div className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
                         <span className={`font-semibold ${colorStyle.text}`}>
                           {subj?.name}
@@ -446,7 +539,6 @@ export const ExamsView: React.FC<{
                       </div>
                     </div>
 
-                    {/* Circular Countdown Ring */}
                     <div className="flex flex-col items-end shrink-0">
                       <div
                         className={`text-sm font-bold font-mono-tabular ${urgencyText}`}
@@ -456,7 +548,7 @@ export const ExamsView: React.FC<{
                       {exam.grade !== undefined && (
                         <div
                           dir="ltr"
-                          className="mt-1 text-base font-bold font-mono-tabular text-emerald-500"
+                          className="mt-1 text-base font-bold font-mono-tabular text-emerald-600 dark:text-emerald-400"
                         >
                           {digits(exam.grade)}/{digits(exam.outOf ?? 20)}
                         </div>
@@ -464,14 +556,13 @@ export const ExamsView: React.FC<{
                     </div>
                   </div>
 
-                  {/* Topics */}
                   {exam.topics.length > 0 && (
                     <div className="mt-3 text-xs text-[var(--text-secondary)]">
                       {exam.topics.join(' · ')}
                     </div>
                   )}
 
-                  {/* Revision Readiness Slider / Meter */}
+                  {/* Revision Readiness Slider */}
                   <div className="mt-4 pt-4 border-t border-[var(--border-subtle)]">
                     <div className="flex items-center justify-between text-xs mb-1.5">
                       <span className="text-[var(--text-muted)]">{t('exams.readiness')}</span>
@@ -588,7 +679,7 @@ export const ExamsView: React.FC<{
                     <button
                       type="button"
                       onClick={() => handleSaveGrade(exam.id)}
-                      className="rounded-xl bg-[var(--accent-primary)] px-3.5 py-1.5 text-xs font-semibold text-white"
+                      className="rounded-xl btn-primary-waqti px-3.5 py-1.5 text-xs font-semibold"
                     >
                       {t('common.save')}
                     </button>

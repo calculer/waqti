@@ -14,7 +14,7 @@ import {
   getWeekDates,
   shiftDateString,
 } from '../lib/dates';
-import { SUBJECT_COLOR_LIST, SUBJECT_COLORS } from '../lib/colors';
+import { getSubjectColor, SUBJECT_COLOR_LIST, SUBJECT_COLORS } from '../lib/colors';
 import { EmptyHourglassIllustration } from '../components/WaqtiLogo';
 import type { Habit, HabitFrequencyType, SubjectColorId } from '../types';
 
@@ -34,7 +34,7 @@ export const HabitsView: React.FC<{
   const [name, setName] = useState('');
   const [frequencyType, setFrequencyType] = useState<HabitFrequencyType>('daily');
   const [timesPerWeek, setTimesPerWeek] = useState(5);
-  const [color, setColor] = useState<SubjectColorId>('violet');
+  const [color, setColor] = useState<SubjectColorId>('honey');
   const [errorMsg, setErrorMsg] = useState('');
 
   const currentWeekDates = useMemo(
@@ -90,7 +90,7 @@ export const HabitsView: React.FC<{
         <button
           type="button"
           onClick={() => setIsAddOpen((v) => !v)}
-          className="flex items-center gap-2 rounded-xl bg-[var(--accent-primary)] px-4 py-2.5 text-xs font-semibold text-white shadow-sm hover:opacity-95 transition whitespace-nowrap"
+          className="flex items-center gap-2 rounded-xl btn-primary-waqti px-4 py-2.5 text-xs font-semibold shadow-sm hover:opacity-95 transition whitespace-nowrap"
         >
           <Plus className="h-4 w-4" />
           <span>{t('habits.add')}</span>
@@ -134,17 +134,17 @@ export const HabitsView: React.FC<{
               <label className="block text-xs font-medium text-[var(--text-secondary)] mb-2">
                 {t('subjects.color')}
               </label>
-              <div className="flex items-center gap-2">
-                {SUBJECT_COLOR_LIST.slice(0, 6).map((c) => (
+              <div className="flex flex-wrap items-center gap-2">
+                {SUBJECT_COLOR_LIST.map((c) => (
                   <button
                     key={c}
                     type="button"
                     aria-label={c}
                     onClick={() => setColor(c)}
-                    className={`h-7 w-7 rounded-full ${SUBJECT_COLORS[c].dot} ${
+                    className={`h-6 w-6 rounded-full ${SUBJECT_COLORS[c].dot} ${
                       color === c
-                        ? 'ring-2 ring-offset-2 ring-[var(--text-primary)]'
-                        : 'opacity-60'
+                        ? 'ring-2 ring-offset-2 ring-[var(--text-primary)] scale-110'
+                        : 'opacity-70 hover:opacity-100'
                     }`}
                   />
                 ))}
@@ -184,7 +184,7 @@ export const HabitsView: React.FC<{
             </button>
             <button
               type="submit"
-              className="rounded-xl bg-[var(--accent-primary)] px-5 py-2 text-xs font-semibold text-white"
+              className="rounded-xl btn-primary-waqti px-5 py-2 text-xs font-semibold"
             >
               {t('common.save')}
             </button>
@@ -200,7 +200,7 @@ export const HabitsView: React.FC<{
       ) : (
         <div className="space-y-4">
           {habits.map((h) => {
-            const colorStyle = SUBJECT_COLORS[h.color];
+            const colorStyle = getSubjectColor(h.color);
             const currentStreak = calculateHabitStreak(h.completedDates, todayStr);
             const completedThisWeek = currentWeekDates.filter((d) =>
               h.completedDates.includes(d)

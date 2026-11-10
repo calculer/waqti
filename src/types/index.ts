@@ -1,19 +1,23 @@
 export type Language = 'ar' | 'fr' | 'en';
 export type ThemeMode = 'light' | 'dark' | 'auto';
-export type AccentTheme = 'violet' | 'ocean' | 'emerald' | 'rose' | 'amber';
+export type AccentTheme = 'honey' | 'sand' | 'olive' | 'terracotta' | 'slate';
 export type DigitsStyle = 'western' | 'arabic-indic';
 export type TimeFormat = '24h' | '12h';
 export type WeekDay = 0 | 1 | 2 | 3 | 4 | 5 | 6; // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
 
 export type SubjectColorId =
+  | 'honey'
+  | 'amber'
+  | 'terracotta'
+  | 'rose'
+  | 'plum'
   | 'violet'
   | 'indigo'
+  | 'slate'
   | 'sky'
-  | 'emerald'
   | 'teal'
-  | 'amber'
-  | 'rose'
-  | 'fuchsia';
+  | 'sage'
+  | 'olive';
 
 export interface Subject {
   id: string;
@@ -41,7 +45,7 @@ export interface TimetableSlot {
   recurrence: RecurrenceType;
   customColor?: SubjectColorId;
   notes?: string;
-  excludedDates?: string[]; // "YYYY-MM-DD" for single-occurrence edits/deletions
+  excludedDates?: string[]; // "YYYY-MM-DD"
 }
 
 export type ExamType =
@@ -66,7 +70,7 @@ export interface Exam {
   coefficient: number;
   topics: string[];
   priority: PriorityLevel;
-  reminderOffsetsMinutes: number[]; // e.g., [1440, 10080] for 1 day, 1 week
+  reminderOffsetsMinutes: number[];
   grade?: number;
   outOf?: number;
   readinessScore: number; // 0 - 100
@@ -91,6 +95,15 @@ export interface LessonLog {
   title: string;
   notes: string;
   links: string[];
+}
+
+export interface Flashcard {
+  id: string;
+  subjectId: string;
+  front: string;
+  back: string;
+  box: 1 | 2 | 3 | 4 | 5; // Leitner box 1..5
+  nextReviewDate: string; // "YYYY-MM-DD"
 }
 
 export type TaskStatus = 'todo' | 'doing' | 'done';
@@ -122,12 +135,70 @@ export interface Habit {
   icon: string;
   color: SubjectColorId;
   frequencyType: HabitFrequencyType;
-  targetDays: WeekDay[]; // used if 'weekdays'
-  timesPerWeek: number; // used if 'times_per_week'
-  reminderTime?: string; // "HH:mm"
-  completedDates: string[]; // array of "YYYY-MM-DD"
+  targetDays: WeekDay[];
+  timesPerWeek: number;
+  reminderTimes?: string[]; // ["08:00", "20:00"]
+  completedDates: string[]; // "YYYY-MM-DD"
   bestStreak: number;
   createdAt: string;
+}
+
+export type AlarmRecurrence = 'once' | 'daily' | 'weekdays' | 'weekly' | 'monthly';
+export type AlarmTone = 'soft_bell' | 'morning_chime' | 'marimba' | 'gentle_rise' | 'digital';
+export type AlarmLinkedType = 'none' | 'habit' | 'task' | 'exam' | 'class' | 'custom';
+
+export interface AlarmReminder {
+  id: string;
+  title: string;
+  note?: string;
+  date: string; // "YYYY-MM-DD" for 'once' or anchor date
+  time: string; // "HH:mm"
+  recurrence: AlarmRecurrence;
+  daysOfWeek: WeekDay[]; // used when recurrence === 'weekdays'
+  linkedType: AlarmLinkedType;
+  linkedId?: string;
+  sound: AlarmTone;
+  vibrate: boolean;
+  snoozeMinutes: number; // default 5, 10, or 15
+  leadMinutes: number; // 0, 10, 30, 60, 1440
+  enabled: boolean;
+  lastFiredDateKey?: string; // e.g. "2026-11-10T08:00" idempotency guard
+  snoozedUntilMs?: number; // timestamp ms if currently snoozed
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MissedAlarmItem {
+  alarmId: string;
+  title: string;
+  scheduledDate: string;
+  scheduledTime: string;
+  linkedType: AlarmLinkedType;
+  linkedId?: string;
+}
+
+export interface DayPlanBlock {
+  id: string;
+  date: string; // "YYYY-MM-DD"
+  startTime: string; // "HH:mm"
+  endTime: string; // "HH:mm"
+  title: string;
+  category: 'class' | 'task' | 'exam_prep' | 'habit';
+  subjectId?: string;
+  completed: boolean;
+}
+
+export interface MoodCheckIn {
+  date: string; // "YYYY-MM-DD"
+  mood: 'calm' | 'focused' | 'energized' | 'tired';
+  energy: 1 | 2 | 3 | 4 | 5;
+}
+
+export interface BackupSnapshot {
+  id: string;
+  createdAt: string; // ISO string
+  label: string;
+  payloadJson: string;
 }
 
 export interface FocusSessionLog {
@@ -136,7 +207,7 @@ export interface FocusSessionLog {
   startedAt: string; // ISO string
   endedAt: string; // ISO string
   durationMinutes: number;
-  date: string; // "YYYY-MM-DD" local date
+  date: string; // "YYYY-MM-DD"
   mode: 'focus' | 'shortBreak' | 'longBreak';
 }
 
@@ -144,8 +215,8 @@ export interface ActiveTimerState {
   isRunning: boolean;
   mode: 'focus' | 'shortBreak' | 'longBreak';
   subjectId: string;
-  startedAtTimestamp: number | null; // Date.now() ms when started
-  accumulatedElapsedMs: number; // elapsed ms before current run
+  startedAtTimestamp: number | null;
+  accumulatedElapsedMs: number;
   targetDurationMs: number;
   completedCycles: number;
   ambientSound: 'none' | 'rain' | 'whitenoise' | 'tones';
@@ -157,10 +228,10 @@ export interface AppNotification {
   titleParams?: Record<string, string | number>;
   bodyKey: string;
   bodyParams?: Record<string, string | number>;
-  createdAt: string; // ISO string
+  createdAt: string;
   read: boolean;
-  snoozedUntil?: string; // ISO string
-  category: 'class' | 'exam' | 'task' | 'habit' | 'focus';
+  snoozedUntil?: string;
+  category: 'class' | 'exam' | 'task' | 'habit' | 'focus' | 'alarm';
 }
 
 export interface UserSettings {
@@ -177,6 +248,15 @@ export interface UserSettings {
   pomodoroShortBreakMinutes: number;
   pomodoroLongBreakMinutes: number;
   notificationsEnabled: boolean;
+  defaultAlarmSound: AlarmTone;
+  defaultSnoozeMinutes: number;
+  alarmVolume: number; // 0.1 - 1.0
+  alarmVibration: boolean;
+  quietHoursEnabled: boolean;
+  quietHoursStart: string; // "23:00"
+  quietHoursEnd: string; // "06:30"
+  gamificationEnabled: boolean;
+  streakFreezeAvailable: boolean;
   hasCompletedOnboarding: boolean;
   isDemoData: boolean;
 }
@@ -188,6 +268,7 @@ export type NavSection =
   | 'exams'
   | 'lessons'
   | 'calendar'
+  | 'alarms'
   | 'focus'
   | 'habits'
   | 'stats'

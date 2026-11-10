@@ -11,14 +11,22 @@ export default defineConfig(() => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: ['icon.svg', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png', 'pwa-maskable-512x512.png'],
+        includeAssets: [
+          'favicon.svg',
+          'icon.svg',
+          'apple-touch-icon.png',
+          'pwa-192x192.png',
+          'pwa-512x512.png',
+          'pwa-maskable-192x192.png',
+          'pwa-maskable-512x512.png',
+        ],
         manifest: {
           id: '/',
           name: 'Waqti (وقتي) — Student Time & Study OS',
           short_name: 'Waqti',
-          description: 'Luxury trilingual time, study, exam countdown, timetable, and habit management app for students.',
-          theme_color: '#090B14',
-          background_color: '#090B14',
+          description: 'Luxury trilingual time, study, exam countdown, timetable, alarms, and habit management app for students.',
+          theme_color: '#14110A',
+          background_color: '#14110A',
           display: 'standalone',
           start_url: '/',
           scope: '/',
@@ -36,14 +44,41 @@ export default defineConfig(() => {
               purpose: 'any',
             },
             {
+              src: '/pwa-maskable-192x192.png',
+              sizes: '192x192',
+              type: 'image/png',
+              purpose: 'maskable',
+            },
+            {
               src: '/pwa-maskable-512x512.png',
               sizes: '512x512',
               type: 'image/png',
               purpose: 'maskable',
             },
           ],
+          shortcuts: [
+            {
+              name: 'Today Dashboard',
+              short_name: 'Today',
+              url: '/?nav=dashboard',
+              icons: [{ src: '/pwa-192x192.png', sizes: '192x192', type: 'image/png' }],
+            },
+            {
+              name: 'Add Study Task',
+              short_name: 'Add Task',
+              url: '/?quickadd=task',
+              icons: [{ src: '/pwa-192x192.png', sizes: '192x192', type: 'image/png' }],
+            },
+            {
+              name: 'Focus Mode',
+              short_name: 'Focus',
+              url: '/?nav=focus',
+              icons: [{ src: '/pwa-192x192.png', sizes: '192x192', type: 'image/png' }],
+            },
+          ],
         },
         workbox: {
+          maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
           runtimeCaching: [
             {
@@ -83,6 +118,7 @@ export default defineConfig(() => {
       }),
     ],
     resolve: {
+      dedupe: ['react', 'react-dom'],
       alias: {
         '@': path.resolve(__dirname, '.'),
       },

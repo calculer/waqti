@@ -2,20 +2,23 @@ import React, { useMemo, useState } from 'react';
 import {
   AlertTriangle,
   Copy,
+  Download,
   Plus,
+  Printer,
   Trash2,
 } from 'lucide-react';
 import { useWaqtiStore } from '../store/useWaqtiStore';
 import { useTranslation } from '../hooks/useTranslation';
 import {
   detectSlotOverlaps,
+  generateIcsContent,
   getOrderedWeekdays,
   getWeekDayIndex,
   isValidTimeOrder,
   minutesToTime,
   timeToMinutes,
 } from '../lib/dates';
-import { SUBJECT_COLORS } from '../lib/colors';
+import { getSubjectColor } from '../lib/colors';
 import type { RecurrenceType, TimetableSlot, WeekDay } from '../types';
 
 export const TimetableView: React.FC<{
@@ -24,6 +27,8 @@ export const TimetableView: React.FC<{
   const { t, lang, formatRange } = useTranslation();
   const subjects = useWaqtiStore((s) => s.subjects);
   const timetable = useWaqtiStore((s) => s.timetable);
+  const exams = useWaqtiStore((s) => s.exams);
+  const tasks = useWaqtiStore((s) => s.tasks);
   const weekStart = useWaqtiStore((s) => s.settings.weekStart);
   const todayStr = useWaqtiStore((s) => s.todayStr);
 
@@ -56,6 +61,19 @@ export const TimetableView: React.FC<{
     if (!isValidTimeOrder(startTime, endTime)) return [];
     return detectSlotOverlaps({ dayOfWeek, startTime, endTime }, timetable);
   }, [dayOfWeek, startTime, endTime, timetable]);
+
+  const handleExportIcs = () => {
+    const ics = generateIcsContent(timetable, exams, tasks, subjects, todayStr);
+    const blob = new Blob([ics], { type: 'text/calendar;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `waqti-schedule-${todayStr}.ics`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
 
   const handleAddSlot = (e: React.FormEvent) => {
     e.preventDefault();
@@ -106,7 +124,7 @@ export const TimetableView: React.FC<{
           <p className="text-sm text-[var(--text-secondary)]">{t('timetable.subtitle')}</p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2">
           {/* View Mode Segmented Control */}
           <div className="flex items-center rounded-xl bg-[var(--bg-elevated)] p-1">
             <button
@@ -135,8 +153,26 @@ export const TimetableView: React.FC<{
 
           <button
             type="button"
+            onClick={handleExportIcs}
+            className="flex items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-2 text-xs font-medium text-[var(--text-primary)] hover:border-[var(--accent-primary)] transition whitespace-nowrap"
+          >
+            <Download className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
+            <span>{t('timetable.exportIcs')}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => window.print()}
+            className="flex items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-2 text-xs font-medium text-[var(--text-primary)] hover:border-[var(--accent-primary)] transition whitespace-nowrap"
+          >
+            <Printer className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
+            <span>{t('timetable.printPdf')}</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => duplicateDaySlots(selectedDay, (selectedDay + 1) % 7)}
-            className="flex items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3.5 py-2 text-xs font-medium text-[var(--text-primary)] hover:border-[var(--accent-primary)] transition whitespace-nowrap"
+            className="flex items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-2 text-xs font-medium text-[var(--text-primary)] hover:border-[var(--accent-primary)] transition whitespace-nowrap"
           >
             <Copy className="h-3.5 w-3.5" />
             <span>{t('timetable.duplicateDay')}</span>
@@ -148,7 +184,7 @@ export const TimetableView: React.FC<{
               setErrorMsg('');
               setIsAddOpen((v) => !v);
             }}
-            className="flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-4 py-2.5 text-xs font-semibold text-white shadow-sm hover:opacity-95 transition whitespace-nowrap"
+            className="flex items-center gap-1.5 rounded-xl btn-primary-waqti px-4 py-2.5 text-xs font-semibold shadow-sm transition whitespace-nowrap"
           >
             <Plus className="h-4 w-4" />
             <span>{t('timetable.addSlot')}</span>
@@ -265,7 +301,7 @@ export const TimetableView: React.FC<{
           </div>
 
           {formConflicts.length > 0 && (
-            <div className="flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 text-xs text-amber-600 dark:text-amber-300">
+            <div className="flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 text-xs text-amber-700 dark:text-amber-300">
               <AlertTriangle className="h-4 w-4 shrink-0" />
               <span>
                 {t('timetable.conflictWarning', {
@@ -296,7 +332,7 @@ export const TimetableView: React.FC<{
             </button>
             <button
               type="submit"
-              className="rounded-xl bg-[var(--accent-primary)] px-5 py-2 text-xs font-semibold text-white"
+              className="rounded-xl btn-primary-waqti px-5 py-2 text-xs font-semibold"
             >
               {t('common.save')}
             </button>
@@ -314,7 +350,7 @@ export const TimetableView: React.FC<{
               onClick={() => setSelectedDay(d.dayIndex)}
               className={`rounded-xl px-4 py-2 text-xs font-semibold transition whitespace-nowrap ${
                 selectedDay === d.dayIndex
-                  ? 'bg-[var(--accent-primary)] text-white'
+                  ? 'btn-primary-waqti'
                   : 'border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-secondary)]'
               }`}
             >
@@ -367,7 +403,7 @@ export const TimetableView: React.FC<{
                 <div className="space-y-2.5">
                   {daySlots.map((slot) => {
                     const subj = subjects.find((s) => s.id === slot.subjectId);
-                    const colorStyle = SUBJECT_COLORS[subj?.color ?? 'violet'];
+                    const colorStyle = getSubjectColor(subj?.color);
                     const conflicts = detectSlotOverlaps(slot, timetable);
 
                     return (
@@ -404,13 +440,12 @@ export const TimetableView: React.FC<{
                         </div>
 
                         {conflicts.length > 0 && (
-                          <div className="mt-2 flex items-center gap-1 text-[10px] font-semibold text-amber-600 dark:text-amber-300">
+                          <div className="mt-2 flex items-center gap-1 text-[10px] font-semibold text-amber-700 dark:text-amber-300">
                             <AlertTriangle className="h-3 w-3 shrink-0" />
                             <span className="truncate">Conflict</span>
                           </div>
                         )}
 
-                        {/* Interactive Move & Resize Controls */}
                         <div className="mt-2.5 pt-2 border-t border-[var(--border-subtle)] flex items-center justify-between gap-1">
                           <button
                             type="button"

@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import { useWaqtiStore } from '../store/useWaqtiStore';
 import { useTranslation } from '../hooks/useTranslation';
-import { SUBJECT_COLOR_LIST, SUBJECT_COLORS } from '../lib/colors';
+import { getSubjectColor, SUBJECT_COLOR_LIST, SUBJECT_COLORS } from '../lib/colors';
 import { EmptyHourglassIllustration } from '../components/WaqtiLogo';
 import type { Subject, SubjectColorId } from '../types';
 
@@ -38,7 +38,7 @@ export const SubjectsView: React.FC<{
   const [room, setRoom] = useState('');
   const [coefficient, setCoefficient] = useState(4);
   const [weeklyGoalHours, setWeeklyGoalHours] = useState(6);
-  const [color, setColor] = useState<SubjectColorId>('violet');
+  const [color, setColor] = useState<SubjectColorId>('honey');
   const [errorMsg, setErrorMsg] = useState('');
 
   const visibleSubjects = useMemo(
@@ -53,7 +53,7 @@ export const SubjectsView: React.FC<{
     setRoom('');
     setCoefficient(4);
     setWeeklyGoalHours(6);
-    setColor('violet');
+    setColor('honey');
     setErrorMsg('');
     setIsFormOpen(true);
   };
@@ -138,7 +138,7 @@ export const SubjectsView: React.FC<{
           <button
             type="button"
             onClick={openNewForm}
-            className="flex items-center gap-2 rounded-xl bg-[var(--accent-primary)] px-4 py-2.5 text-xs font-semibold text-white shadow-sm hover:opacity-95 transition whitespace-nowrap"
+            className="flex items-center gap-2 rounded-xl btn-primary-waqti px-4 py-2.5 text-xs font-semibold shadow-sm hover:opacity-95 transition whitespace-nowrap"
           >
             <Plus className="h-4 w-4" />
             <span>{t('subjects.add')}</span>
@@ -223,17 +223,17 @@ export const SubjectsView: React.FC<{
               <label className="block text-xs font-medium text-[var(--text-secondary)] mb-2">
                 {t('subjects.color')}
               </label>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {SUBJECT_COLOR_LIST.map((c) => (
                   <button
                     key={c}
                     type="button"
                     aria-label={c}
                     onClick={() => setColor(c)}
-                    className={`h-7 w-7 rounded-full ${SUBJECT_COLORS[c].dot} transition ${
+                    className={`h-6 w-6 rounded-full ${SUBJECT_COLORS[c].dot} transition ${
                       color === c
                         ? 'ring-2 ring-offset-2 ring-[var(--text-primary)] scale-110'
-                        : 'opacity-60 hover:opacity-100'
+                        : 'opacity-70 hover:opacity-100'
                     }`}
                   />
                 ))}
@@ -257,7 +257,7 @@ export const SubjectsView: React.FC<{
             </button>
             <button
               type="submit"
-              className="rounded-xl bg-[var(--accent-primary)] px-5 py-2 text-xs font-semibold text-white"
+              className="rounded-xl btn-primary-waqti px-5 py-2 text-xs font-semibold"
             >
               {t('common.save')}
             </button>
@@ -272,7 +272,7 @@ export const SubjectsView: React.FC<{
             <div className="flex items-center gap-3">
               <span
                 className={`h-4 w-4 rounded-full ${
-                  SUBJECT_COLORS[activeDetailSubject.color].dot
+                  getSubjectColor(activeDetailSubject.color).dot
                 }`}
               />
               <h2 className="text-lg font-bold text-[var(--text-primary)]">
@@ -344,7 +344,7 @@ export const SubjectsView: React.FC<{
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
           {visibleSubjects.map((subj) => {
-            const colorStyle = SUBJECT_COLORS[subj.color];
+            const colorStyle = getSubjectColor(subj.color);
             const subjMinutes = focusSessions
               .filter((f) => f.subjectId === subj.id && f.mode === 'focus')
               .reduce((acc, cur) => acc + cur.durationMinutes, 0);

@@ -1,25 +1,39 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import type {
+  AccentTheme,
   ActiveTimerState,
+  AlarmReminder,
   AppNotification,
+  BackupSnapshot,
+  DayPlanBlock,
   Exam,
+  Flashcard,
   FocusSessionLog,
   Habit,
   Language,
   LessonLog,
+  MissedAlarmItem,
+  MoodCheckIn,
   NavSection,
   RevisionSession,
   StudyTask,
   Subject,
+  SubjectColorId,
   TimetableSlot,
   UserSettings,
 } from '../types';
 import {
   calculateHabitStreak,
+  detectSlotOverlaps,
   detectTimezone,
+  findMissedAlarms,
   generateRevisionPlanForExam,
   getLocalDateString,
+  getLocalTimeString,
+  getWeekDayIndex,
+  isAlarmDueNow,
+  shiftDateString,
 } from '../lib/dates';
 import {
   detectBrowserLanguage,
@@ -27,8 +41,9 @@ import {
   getDefaultWeekStart,
 } from '../lib/i18n';
 import { buildSeedDemoData } from '../lib/demoData';
+import { SUBJECT_COLORS } from '../lib/colors';
 
-export const STORAGE_SCHEMA_VERSION = 2;
+export const STORAGE_SCHEMA_VERSION = 3;
 
 export interface WaqtiState {
   schemaVersion: number;
@@ -46,6 +61,18 @@ export interface WaqtiState {
   focusSessions: FocusSessionLog[];
   notifications: AppNotification[];
   timer: ActiveTimerState;
+
+  // New v3 state slices
+  alarms: AlarmReminder[];
+  activeRingingAlarm: AlarmReminder | null;
+  missedAlarms: MissedAlarmItem[];
+  lastAlarmCheckMs: number;
+  flashcards: Flashcard[];
+  dayPlan: DayPlanBlock[];
+  moodCheckIns: MoodCheckIn[];
+  snapshots: BackupSnapshot[];
+  xp: number;
+  level: number;
 
   // Navigation & Clock Rollover
   setActiveNav: (nav: NavSection, subjectId?: string | null) => void;
@@ -77,18 +104,41 @@ export interface WaqtiState {
   setCustomRevisionSessions: (examId: string, sessions: RevisionSession[]) => void;
   toggleRevisionSession: (id: string) => void;
 
-  // Lessons & Tasks CRUD
+  // Lessons, Tasks & Flashcards CRUD
   addLesson: (lesson: Omit<LessonLog, 'id'>) => string;
   deleteLesson: (id: string) => void;
   addTask: (task: Omit<StudyTask, 'id'>) => string;
   updateTask: (id: string, partial: Partial<StudyTask>) => void;
   deleteTask: (id: string) => StudyTask | null;
   toggleSubtask: (taskId: string, subtaskId: string) => void;
+  addFlashcard: (fc: Omit<Flashcard, 'id' | 'box' | 'nextReviewDate'>) => string;
+  reviewFlashcard: (id: string, promoted: boolean) => void;
+  deleteFlashcard: (id: string) => void;
 
   // Habits CRUD
   addHabit: (habit: Omit<Habit, 'id' | 'completedDates' | 'bestStreak' | 'createdAt'>) => string;
   toggleHabitDate: (habitId: string, dateStr: string) => void;
   deleteHabit: (id: string) => Habit | null;
+
+  // Alarms & Reminders CRUD + Engine
+  addAlarm: (alarm: Omit<AlarmReminder, 'id' | 'createdAt' | 'updatedAt'>) => string;
+  updateAlarm: (id: string, partial: Partial<AlarmReminder>) => void;
+  deleteAlarm: (id: string) => AlarmReminder | null;
+  toggleAlarm: (id: string) => void;
+  evaluateDueAlarms: (nowMs?: number) => void;
+  triggerTestAlarm: () => void;
+  dismissRingingAlarm: () => void;
+  snoozeRingingAlarm: (minutes?: number) => void;
+  completeRingingAlarmLinkedItem: () => void;
+  dismissMissedAlarms: () => void;
+
+  // Smart Day Plan, Mood Check-in & Snapshots
+  generateSmartDayPlan: (shuffleOffset?: number) => void;
+  toggleDayPlanBlock: (id: string) => void;
+  clearDayPlan: () => void;
+  setMoodCheckIn: (mood: MoodCheckIn['mood'], energy: MoodCheckIn['energy']) => void;
+  createSnapshot: (label?: string) => void;
+  restoreSnapshot: (id: string) => boolean;
 
   // Focus Timer (Timestamp-based)
   startTimer: () => void;
@@ -111,7 +161,7 @@ const initialDemo = buildSeedDemoData(initialLang, initialToday);
 const defaultSettings: UserSettings = {
   language: initialLang,
   theme: 'dark',
-  accent: 'violet',
+  accent: 'honey',
   weekStart: getDefaultWeekStart(initialLang),
   weekendDays: getDefaultWeekendDays(initialLang),
   timeFormat: '24h',
@@ -122,28 +172,75 @@ const defaultSettings: UserSettings = {
   pomodoroShortBreakMinutes: 5,
   pomodoroLongBreakMinutes: 15,
   notificationsEnabled: false,
+  defaultAlarmSound: 'soft_bell',
+  defaultSnoozeMinutes: 10,
+  alarmVolume: 0.8,
+  alarmVibration: true,
+  quietHoursEnabled: false,
+  quietHoursStart: '23:00',
+  quietHoursEnd: '06:30',
+  gamificationEnabled: true,
+  streakFreezeAvailable: true,
   hasCompletedOnboarding: false,
   isDemoData: true,
 };
 
+function normalizeColor(c: unknown): SubjectColorId {
+  if (typeof c === 'string' && c in SUBJECT_COLORS) {
+    return c as SubjectColorId;
+  }
+  if (c === 'emerald') return 'sage';
+  if (c === 'fuchsia') return 'plum';
+  if (c === 'orange') return 'terracotta';
+  return 'honey';
+}
+
+function normalizeAccent(a: unknown): AccentTheme {
+  const valid: AccentTheme[] = ['honey', 'sand', 'olive', 'terracotta', 'slate'];
+  if (typeof a === 'string' && valid.includes(a as AccentTheme)) {
+    return a as AccentTheme;
+  }
+  return 'honey';
+}
+
 /**
  * Versioned storage migration function to safely upgrade older schemas or repair corrupted fields.
  */
-export function migrateWaqtiState(persistedState: unknown, version: number): Partial<WaqtiState> {
+export function migrateWaqtiState(persistedState: unknown, _version: number): Partial<WaqtiState> {
   if (!persistedState || typeof persistedState !== 'object') {
     return {};
   }
   const raw = persistedState as Record<string, unknown>;
-  const settings = {
+  const rawSettings =
+    typeof raw.settings === 'object' && raw.settings !== null
+      ? (raw.settings as Record<string, unknown>)
+      : {};
+
+  const settings: UserSettings = {
     ...defaultSettings,
-    ...(typeof raw.settings === 'object' && raw.settings !== null ? raw.settings : {}),
-  } as UserSettings;
+    ...(rawSettings as Partial<UserSettings>),
+    accent: normalizeAccent(rawSettings.accent),
+  };
+
+  const rawSubjects = Array.isArray(raw.subjects)
+    ? (raw.subjects as Subject[]).map((s) => ({
+        ...s,
+        color: normalizeColor(s.color),
+      }))
+    : initialDemo.subjects;
+
+  const rawHabits = Array.isArray(raw.habits)
+    ? (raw.habits as Habit[]).map((h) => ({
+        ...h,
+        color: normalizeColor(h.color),
+      }))
+    : initialDemo.habits;
 
   return {
     ...raw,
     schemaVersion: STORAGE_SCHEMA_VERSION,
     settings,
-    subjects: Array.isArray(raw.subjects) ? raw.subjects : initialDemo.subjects,
+    subjects: rawSubjects,
     timetable: Array.isArray(raw.timetable) ? raw.timetable : initialDemo.timetable,
     exams: Array.isArray(raw.exams) ? raw.exams : initialDemo.exams,
     revisionSessions: Array.isArray(raw.revisionSessions)
@@ -151,11 +248,22 @@ export function migrateWaqtiState(persistedState: unknown, version: number): Par
       : initialDemo.revisionSessions,
     lessons: Array.isArray(raw.lessons) ? raw.lessons : initialDemo.lessons,
     tasks: Array.isArray(raw.tasks) ? raw.tasks : initialDemo.tasks,
-    habits: Array.isArray(raw.habits) ? raw.habits : initialDemo.habits,
+    habits: rawHabits,
     focusSessions: Array.isArray(raw.focusSessions)
       ? raw.focusSessions
       : initialDemo.focusSessions,
+    alarms: Array.isArray(raw.alarms) ? raw.alarms : initialDemo.alarms,
+    flashcards: Array.isArray(raw.flashcards) ? raw.flashcards : initialDemo.flashcards,
+    dayPlan: Array.isArray(raw.dayPlan) ? raw.dayPlan : [],
+    moodCheckIns: Array.isArray(raw.moodCheckIns) ? raw.moodCheckIns : [],
+    snapshots: Array.isArray(raw.snapshots) ? raw.snapshots : [],
+    xp: typeof raw.xp === 'number' ? raw.xp : 340,
+    level: typeof raw.level === 'number' ? raw.level : 4,
   };
+}
+
+function computeLevelFromXp(xp: number): number {
+  return Math.max(1, Math.floor(xp / 100) + 1);
 }
 
 export const useWaqtiStore = create<WaqtiState>()(
@@ -174,6 +282,16 @@ export const useWaqtiStore = create<WaqtiState>()(
       tasks: initialDemo.tasks,
       habits: initialDemo.habits,
       focusSessions: initialDemo.focusSessions,
+      alarms: initialDemo.alarms,
+      activeRingingAlarm: null,
+      missedAlarms: [],
+      lastAlarmCheckMs: Date.now(),
+      flashcards: initialDemo.flashcards,
+      dayPlan: [],
+      moodCheckIns: [],
+      snapshots: [],
+      xp: 340,
+      level: 4,
       notifications: [
         {
           id: 'notif-welcome',
@@ -214,7 +332,6 @@ export const useWaqtiStore = create<WaqtiState>()(
             weekStart: getDefaultWeekStart(lang),
             weekendDays: getDefaultWeekendDays(lang),
           };
-          // If still using untouched demo workspace, localize demo items seamlessly
           if (state.settings.isDemoData) {
             const localizedDemo = buildSeedDemoData(lang, state.todayStr);
             return {
@@ -226,6 +343,8 @@ export const useWaqtiStore = create<WaqtiState>()(
               lessons: localizedDemo.lessons,
               tasks: localizedDemo.tasks,
               habits: localizedDemo.habits,
+              alarms: localizedDemo.alarms,
+              flashcards: localizedDemo.flashcards,
             };
           }
           return { settings: updatedSettings };
@@ -287,6 +406,9 @@ export const useWaqtiStore = create<WaqtiState>()(
           tasks: [],
           habits: [],
           focusSessions: [],
+          alarms: [],
+          flashcards: [],
+          dayPlan: [],
           notifications: [],
           settings: {
             ...state.settings,
@@ -298,6 +420,7 @@ export const useWaqtiStore = create<WaqtiState>()(
         try {
           const parsed = JSON.parse(rawJson) as Partial<WaqtiState>;
           if (!parsed || typeof parsed !== 'object') return false;
+          get().createSnapshot('Pre-Import Auto Backup');
           set((state) => ({
             ...state,
             ...migrateWaqtiState(parsed, STORAGE_SCHEMA_VERSION),
@@ -453,22 +576,28 @@ export const useWaqtiStore = create<WaqtiState>()(
       },
 
       updateTask: (id, partial) =>
-        set((state) => ({
-          tasks: state.tasks.map((tk) =>
-            tk.id === id
-              ? {
-                  ...tk,
-                  ...partial,
-                  completedAt:
-                    partial.status === 'done'
-                      ? new Date().toISOString()
-                      : partial.status
-                        ? undefined
-                        : tk.completedAt,
-                }
-              : tk
-          ),
-        })),
+        set((state) => {
+          const gainedXp = partial.status === 'done' ? 20 : 0;
+          const nextXp = state.xp + gainedXp;
+          return {
+            xp: nextXp,
+            level: computeLevelFromXp(nextXp),
+            tasks: state.tasks.map((tk) =>
+              tk.id === id
+                ? {
+                    ...tk,
+                    ...partial,
+                    completedAt:
+                      partial.status === 'done'
+                        ? new Date().toISOString()
+                        : partial.status
+                          ? undefined
+                          : tk.completedAt,
+                  }
+                : tk
+            ),
+          };
+        }),
 
       deleteTask: (id) => {
         const target = get().tasks.find((t) => t.id === id) ?? null;
@@ -493,6 +622,44 @@ export const useWaqtiStore = create<WaqtiState>()(
           ),
         })),
 
+      addFlashcard: (fc) => {
+        const id = `fc-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`;
+        set((state) => ({
+          flashcards: [
+            {
+              ...fc,
+              id,
+              box: 1,
+              nextReviewDate: state.todayStr,
+            },
+            ...state.flashcards,
+          ],
+          settings: { ...state.settings, isDemoData: false },
+        }));
+        return id;
+      },
+
+      reviewFlashcard: (id, promoted) =>
+        set((state) => {
+          const intervals: Record<number, number> = { 1: 1, 2: 2, 3: 4, 4: 7, 5: 14 };
+          const nextXp = state.xp + (promoted ? 10 : 5);
+          return {
+            xp: nextXp,
+            level: computeLevelFromXp(nextXp),
+            flashcards: state.flashcards.map((fc) => {
+              if (fc.id !== id) return fc;
+              const nextBox = (promoted ? Math.min(5, fc.box + 1) : 1) as Flashcard['box'];
+              const nextReviewDate = shiftDateString(state.todayStr, intervals[nextBox] ?? 1);
+              return { ...fc, box: nextBox, nextReviewDate };
+            }),
+          };
+        }),
+
+      deleteFlashcard: (id) =>
+        set((state) => ({
+          flashcards: state.flashcards.filter((fc) => fc.id !== id),
+        })),
+
       addHabit: (habit) => {
         const id = `hab-${Date.now()}`;
         set((state) => ({
@@ -512,10 +679,12 @@ export const useWaqtiStore = create<WaqtiState>()(
       },
 
       toggleHabitDate: (habitId, dateStr) =>
-        set((state) => ({
-          habits: state.habits.map((h) => {
+        set((state) => {
+          let xpDelta = 0;
+          const nextHabits = state.habits.map((h) => {
             if (h.id !== habitId) return h;
             const exists = h.completedDates.includes(dateStr);
+            xpDelta = exists ? -15 : 15;
             const nextDates = exists
               ? h.completedDates.filter((d) => d !== dateStr)
               : [...h.completedDates, dateStr];
@@ -525,8 +694,14 @@ export const useWaqtiStore = create<WaqtiState>()(
               completedDates: nextDates,
               bestStreak: Math.max(h.bestStreak, currentStreak),
             };
-          }),
-        })),
+          });
+          const nextXp = Math.max(0, state.xp + xpDelta);
+          return {
+            habits: nextHabits,
+            xp: nextXp,
+            level: computeLevelFromXp(nextXp),
+          };
+        }),
 
       deleteHabit: (id) => {
         const target = get().habits.find((h) => h.id === id) ?? null;
@@ -535,6 +710,332 @@ export const useWaqtiStore = create<WaqtiState>()(
           habits: state.habits.filter((h) => h.id !== id),
         }));
         return target;
+      },
+
+      addAlarm: (alarm) => {
+        const id = `alarm-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        const nowIso = new Date().toISOString();
+        set((state) => ({
+          alarms: [
+            {
+              ...alarm,
+              id,
+              createdAt: nowIso,
+              updatedAt: nowIso,
+            },
+            ...state.alarms,
+          ],
+          settings: { ...state.settings, isDemoData: false },
+        }));
+        return id;
+      },
+
+      updateAlarm: (id, partial) =>
+        set((state) => ({
+          alarms: state.alarms.map((a) =>
+            a.id === id ? { ...a, ...partial, updatedAt: new Date().toISOString() } : a
+          ),
+        })),
+
+      deleteAlarm: (id) => {
+        const target = get().alarms.find((a) => a.id === id) ?? null;
+        if (!target) return null;
+        set((state) => ({
+          alarms: state.alarms.filter((a) => a.id !== id),
+        }));
+        return target;
+      },
+
+      toggleAlarm: (id) =>
+        set((state) => ({
+          alarms: state.alarms.map((a) =>
+            a.id === id
+              ? {
+                  ...a,
+                  enabled: !a.enabled,
+                  snoozedUntilMs: undefined,
+                  updatedAt: new Date().toISOString(),
+                }
+              : a
+          ),
+        })),
+
+      evaluateDueAlarms: (nowMs = Date.now()) => {
+        const state = get();
+        const tz = state.settings.timezone;
+        const nowDate = new Date(nowMs);
+        const nowDateStr = getLocalDateString(nowDate, tz);
+        const nowTimeStr = getLocalTimeString(nowDate, tz);
+
+        // 1. Check missed alarms if there was a sleep/offline gap (> 90 seconds)
+        let newlyMissed: MissedAlarmItem[] = [];
+        if (nowMs - state.lastAlarmCheckMs > 90_000) {
+          newlyMissed = findMissedAlarms(state.alarms, state.lastAlarmCheckMs, nowMs, tz);
+        }
+
+        // 2. Check if any alarm is due right now
+        const quietCfg = {
+          enabled: state.settings.quietHoursEnabled,
+          start: state.settings.quietHoursStart,
+          end: state.settings.quietHoursEnd,
+        };
+
+        let dueAlarm: AlarmReminder | null = null;
+        if (!state.activeRingingAlarm) {
+          for (const alarm of state.alarms) {
+            if (isAlarmDueNow(alarm, nowDateStr, nowTimeStr, nowMs, quietCfg)) {
+              dueAlarm = alarm;
+              break;
+            }
+          }
+        }
+
+        if (!dueAlarm && newlyMissed.length === 0) {
+          set({ lastAlarmCheckMs: nowMs });
+          return;
+        }
+
+        const fireKey = `${nowDateStr}T${nowTimeStr}`;
+        set((prev) => ({
+          lastAlarmCheckMs: nowMs,
+          activeRingingAlarm: dueAlarm ?? prev.activeRingingAlarm,
+          missedAlarms:
+            newlyMissed.length > 0 ? [...prev.missedAlarms, ...newlyMissed] : prev.missedAlarms,
+          alarms: dueAlarm
+            ? prev.alarms.map((a) =>
+                a.id === dueAlarm.id
+                  ? {
+                      ...a,
+                      lastFiredDateKey: fireKey,
+                      snoozedUntilMs: undefined,
+                      enabled: a.recurrence === 'once' ? false : a.enabled,
+                    }
+                  : a
+              )
+            : prev.alarms,
+        }));
+      },
+
+      triggerTestAlarm: () => {
+        const state = get();
+        const now = new Date();
+        const testAlarm: AlarmReminder = {
+          id: 'alarm-test-live',
+          title:
+            state.settings.language === 'ar'
+              ? 'اختبار منبه وقتي الذكي'
+              : state.settings.language === 'fr'
+                ? 'Test d’alarme Waqti'
+                : 'Waqti Smart Alarm Live Test',
+          note:
+            state.settings.language === 'ar'
+              ? 'تجربة الصوت المتدرج وشاشة التنبيه الكاملة'
+              : state.settings.language === 'fr'
+                ? 'Aperçu de la sonnerie progressive et de l’écran d’alarme'
+                : 'Previewing progressive Web Audio chime & full-screen overlay',
+          date: state.todayStr,
+          time: getLocalTimeString(now, state.settings.timezone),
+          recurrence: 'once',
+          daysOfWeek: [],
+          linkedType: 'habit',
+          linkedId: state.habits[0]?.id,
+          sound: state.settings.defaultAlarmSound,
+          vibrate: state.settings.alarmVibration,
+          snoozeMinutes: state.settings.defaultSnoozeMinutes,
+          leadMinutes: 0,
+          enabled: true,
+          createdAt: now.toISOString(),
+          updatedAt: now.toISOString(),
+        };
+        set({ activeRingingAlarm: testAlarm });
+      },
+
+      dismissRingingAlarm: () => set({ activeRingingAlarm: null }),
+
+      snoozeRingingAlarm: (minutes) =>
+        set((state) => {
+          const active = state.activeRingingAlarm;
+          if (!active) return { activeRingingAlarm: null };
+          const snoozeMins = minutes ?? active.snoozeMinutes ?? 10;
+          const snoozedUntilMs = Date.now() + snoozeMins * 60_000;
+          return {
+            activeRingingAlarm: null,
+            alarms: state.alarms.map((a) =>
+              a.id === active.id ? { ...a, enabled: true, snoozedUntilMs } : a
+            ),
+          };
+        }),
+
+      completeRingingAlarmLinkedItem: () => {
+        const state = get();
+        const active = state.activeRingingAlarm;
+        if (!active) return;
+        if (active.linkedType === 'habit' && active.linkedId) {
+          const h = state.habits.find((item) => item.id === active.linkedId);
+          if (h && !h.completedDates.includes(state.todayStr)) {
+            state.toggleHabitDate(h.id, state.todayStr);
+          }
+        } else if (active.linkedType === 'task' && active.linkedId) {
+          state.updateTask(active.linkedId, { status: 'done' });
+        }
+        set({ activeRingingAlarm: null });
+      },
+
+      dismissMissedAlarms: () => set({ missedAlarms: [] }),
+
+      generateSmartDayPlan: (shuffleOffset = 0) =>
+        set((state) => {
+          const todayDow = getWeekDayIndex(state.todayStr);
+          const todaySlots = state.timetable
+            .filter((s) => s.dayOfWeek === todayDow)
+            .sort((a, b) => a.startTime.localeCompare(b.startTime));
+
+          const blocks: DayPlanBlock[] = todaySlots.map((sl) => {
+            const subj = state.subjects.find((s) => s.id === sl.subjectId);
+            return {
+              id: `dp-class-${sl.id}`,
+              date: state.todayStr,
+              startTime: sl.startTime,
+              endTime: sl.endTime,
+              title: subj?.name ?? 'Class',
+              category: 'class',
+              subjectId: sl.subjectId,
+              completed: false,
+            };
+          });
+
+          const candidateWindows = [
+            { startTime: '07:30', endTime: '08:15' },
+            { startTime: '12:30', endTime: '13:30' },
+            { startTime: '16:00', endTime: '17:15' },
+            { startTime: '17:45', endTime: '19:00' },
+            { startTime: '19:30', endTime: '20:45' },
+            { startTime: '21:00', endTime: '22:00' },
+          ];
+
+          const freeWindows = candidateWindows.filter((win) => {
+            const overlaps = detectSlotOverlaps(
+              { dayOfWeek: todayDow, startTime: win.startTime, endTime: win.endTime },
+              todaySlots
+            );
+            return overlaps.length === 0;
+          });
+
+          const pendingTasks = state.tasks.filter((t) => t.status !== 'done');
+          const upcomingExams = state.exams.filter((e) => e.date >= state.todayStr);
+          const pendingHabits = state.habits.filter(
+            (h) => !h.completedDates.includes(state.todayStr)
+          );
+
+          const pool: Array<{
+            title: string;
+            category: DayPlanBlock['category'];
+            subjectId?: string;
+          }> = [
+            ...pendingTasks.map((tk) => ({
+              title: tk.title,
+              category: 'task' as const,
+              subjectId: tk.subjectId,
+            })),
+            ...upcomingExams.map((ex) => ({
+              title: `${ex.title} — Revision`,
+              category: 'exam_prep' as const,
+              subjectId: ex.subjectId,
+            })),
+            ...pendingHabits.map((hb) => ({
+              title: hb.name,
+              category: 'habit' as const,
+            })),
+          ];
+
+          if (pool.length > 0 && freeWindows.length > 0) {
+            freeWindows.slice(0, Math.min(4, pool.length)).forEach((win, i) => {
+              const item = pool[(i + shuffleOffset) % pool.length];
+              blocks.push({
+                id: `dp-gen-${Date.now()}-${i}`,
+                date: state.todayStr,
+                startTime: win.startTime,
+                endTime: win.endTime,
+                title: item.title,
+                category: item.category,
+                subjectId: item.subjectId,
+                completed: false,
+              });
+            });
+          }
+
+          blocks.sort((a, b) => a.startTime.localeCompare(b.startTime));
+          return { dayPlan: blocks };
+        }),
+
+      toggleDayPlanBlock: (id) =>
+        set((state) => ({
+          dayPlan: state.dayPlan.map((b) =>
+            b.id === id ? { ...b, completed: !b.completed } : b
+          ),
+        })),
+
+      clearDayPlan: () => set({ dayPlan: [] }),
+
+      setMoodCheckIn: (mood, energy) =>
+        set((state) => ({
+          moodCheckIns: [
+            ...state.moodCheckIns.filter((m) => m.date !== state.todayStr),
+            { date: state.todayStr, mood, energy },
+          ],
+        })),
+
+      createSnapshot: (label) =>
+        set((state) => {
+          const payload = JSON.stringify({
+            subjects: state.subjects,
+            timetable: state.timetable,
+            exams: state.exams,
+            revisionSessions: state.revisionSessions,
+            lessons: state.lessons,
+            tasks: state.tasks,
+            habits: state.habits,
+            alarms: state.alarms,
+            flashcards: state.flashcards,
+            focusSessions: state.focusSessions,
+          });
+          const snap: BackupSnapshot = {
+            id: `snap-${Date.now()}`,
+            createdAt: new Date().toISOString(),
+            label: label || `Snapshot ${state.todayStr}`,
+            payloadJson: payload,
+          };
+          return {
+            snapshots: [snap, ...state.snapshots].slice(0, 7),
+          };
+        }),
+
+      restoreSnapshot: (id) => {
+        const snap = get().snapshots.find((s) => s.id === id);
+        if (!snap) return false;
+        try {
+          const data = JSON.parse(snap.payloadJson) as Partial<WaqtiState>;
+          set((state) => ({
+            ...state,
+            subjects: Array.isArray(data.subjects) ? data.subjects : state.subjects,
+            timetable: Array.isArray(data.timetable) ? data.timetable : state.timetable,
+            exams: Array.isArray(data.exams) ? data.exams : state.exams,
+            revisionSessions: Array.isArray(data.revisionSessions)
+              ? data.revisionSessions
+              : state.revisionSessions,
+            lessons: Array.isArray(data.lessons) ? data.lessons : state.lessons,
+            tasks: Array.isArray(data.tasks) ? data.tasks : state.tasks,
+            habits: Array.isArray(data.habits) ? data.habits : state.habits,
+            alarms: Array.isArray(data.alarms) ? data.alarms : state.alarms,
+            flashcards: Array.isArray(data.flashcards) ? data.flashcards : state.flashcards,
+            focusSessions: Array.isArray(data.focusSessions)
+              ? data.focusSessions
+              : state.focusSessions,
+          }));
+          return true;
+        } catch {
+          return false;
+        }
       },
 
       startTimer: () =>
@@ -628,7 +1129,11 @@ export const useWaqtiStore = create<WaqtiState>()(
                 ? state.settings.pomodoroShortBreakMinutes
                 : state.settings.pomodoroLongBreakMinutes;
 
+          const nextXp = state.timer.mode === 'focus' ? state.xp + 30 : state.xp;
+
           return {
+            xp: nextXp,
+            level: computeLevelFromXp(nextXp),
             focusSessions:
               state.timer.mode === 'focus'
                 ? [newLog, ...state.focusSessions]

@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="honeyBadge" x1="48" y1="32" x2="464" y2="480" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#262115" />
+      <stop offset="55%" stop-color="#1D1910" />
+      <stop offset="100%" stop-color="#14110A" />
+    </linearGradient>
+    <linearGradient id="honeyGold" x1="112" y1="88" x2="400" y2="424" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#F6EBC4" />
+      <stop offset="45%" stop-color="#E6C65C" />
+      <stop offset="100%" stop-color="#B8902A" />
+    </linearGradient>
+  </defs>
+  <!-- Squircle Badge -->
+  <rect x="16" y="16" width="480" height="480" rx="124" fill="url(#honeyBadge)" stroke="url(#honeyGold)" stroke-width="12" stroke-opacity="0.45" />
+  <rect x="32" y="32" width="448" height="448" rx="110" stroke="#F6EBC4" stroke-width="2" stroke-opacity="0.18" />
+  <!-- Clock Ring -->
+  <circle cx="256" cy="256" r="168" stroke="url(#honeyGold)" stroke-width="10" stroke-opacity="0.32" stroke-dasharray="14 10" />
+  <!-- Hourglass-meets-Clock Glyph -->
+  <path d="M180 148H332L276 238C266 254 266 258 276 274L332 364H180L236 274C246 258 246 254 236 238L180 148Z" stroke="url(#honeyGold)" stroke-width="22" stroke-linecap="round" stroke-linejoin="round" fill="rgba(230, 198, 92, 0.14)" />
+  <!-- Clock Hand & Check/Sparkle Detail -->
+  <circle cx="256" cy="256" r="13" fill="#F6EBC4" />
+  <path d="M256 256L294 226" stroke="#F6EBC4" stroke-width="12" stroke-linecap="round" />
+  <path d="M214 336H298" stroke="#E6C65C" stroke-width="14" stroke-linecap="round" />
+  <!-- Sparkle / Star Accent at top right -->
+  <path d="M364 116L371 135L390 142L371 149L364 168L357 149L338 142L357 135L364 116Z" fill="#E6C65C" />
+</svg>

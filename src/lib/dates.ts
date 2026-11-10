@@ -1,10 +1,12 @@
 import {
   addDays,
+  addMinutes,
   addMonths,
   differenceInCalendarDays,
   differenceInMinutes,
   endOfMonth,
   format,
+  getDate,
   getDay,
   isAfter,
   isBefore,
@@ -13,14 +15,19 @@ import {
   startOfMonth,
   startOfWeek,
   subDays,
+  subMinutes,
 } from 'date-fns';
 import { arSA, enUS, fr } from 'date-fns/locale';
 import type {
   ActiveTimerState,
+  AlarmReminder,
   DigitsStyle,
   Exam,
   Language,
+  MissedAlarmItem,
   RevisionSession,
+  StudyTask,
+  Subject,
   TimeFormat,
   TimetableSlot,
   WeekDay,
@@ -113,7 +120,7 @@ export function timeToMinutes(timeStr: string): number {
 }
 
 /**
- * Converts minutes from midnight into "HH:mm" clamped to [00:00, 23:45].
+ * Converts minutes from midnight into "HH:mm" clamped to [00:00, 23:59].
  */
 export function minutesToTime(totalMinutes: number): string {
   const clamped = Math.max(0, Math.min(23 * 60 + 59, Math.round(totalMinutes)));
@@ -246,7 +253,6 @@ export function computeExamCountdown(
     );
   }
 
-  // Progress ring percentage relative to a 14-day window
   const windowMinutes = 14 * 24 * 60;
   const progressPercent = Math.max(
     8,
@@ -329,7 +335,6 @@ export function getOrderedWeekdays(
   weekStart: WeekDay,
   formatPattern: 'EEEE' | 'EEE' | 'ccccc' = 'EEE'
 ): { dayIndex: WeekDay; label: string }[] {
-  // 2026-11-08 is a Sunday (dayIndex 0)
   const baseSunday = parseLocalDateTime('2026-11-08', '12:00');
   return Array.from({ length: 7 }, (_, idx) => {
     const dayIndex = ((weekStart + idx) % 7) as WeekDay;
@@ -457,4 +462,401 @@ export function generateRevisionPlanForExam(
   return sessions;
 }
 
-export { endOfMonth, isAfter, isBefore, isSameDay };
+/**
+ * Calendar Month Cell Overflow Summarizer:
+ * Returns at most `maxDots` (default 3) items for the dot row and an exact `+N` overflow count.
+ */
+export function summarizeMonthCellEvents<T>(
+  events: T[],
+  maxDots: number = 3
+): { visibleDots: T[]; overflowCount: number } {
+  const safeMax = Math.max(1, maxDots);
+  const visibleDots = events.slice(0, safeMax);
+  const overflowCount = Math.max(0, events.length - safeMax);
+  return { visibleDots, overflowCount };
+}
+
+/**
+ * Calendar Week/Day View Column Packing:
+ * Packs overlapping time-ranged events into side-by-side columns (`colIndex`, `totalCols`)
+ * so overlapping events never render on top of each other's text.
+ */
+export function packOverlappingEvents<
+  T extends { id: string; startTime: string; endTime: string }
+>(events: T[]): Array<T & { colIndex: number; totalCols: number }> {
+  if (events.length === 0) return [];
+
+  const sorted = [...events].sort((a, b) => {
+    const diffStart = timeToMinutes(a.startTime) - timeToMinutes(b.startTime);
+    if (diffStart !== 0) return diffStart;
+    return timeToMinutes(b.endTime) - timeToMinutes(a.endTime);
+  });
+
+  // Partition into connected overlap clusters
+  const clusters: T[][] = [];
+  let currentCluster: T[] = [];
+  let clusterMaxEnd = -1;
+
+  for (const ev of sorted) {
+    const s = timeToMinutes(ev.startTime);
+    const e = Math.max(s + 15, timeToMinutes(ev.endTime));
+    if (currentCluster.length === 0 || s < clusterMaxEnd) {
+      currentCluster.push(ev);
+      clusterMaxEnd = Math.max(clusterMaxEnd, e);
+    } else {
+      clusters.push(currentCluster);
+      currentCluster = [ev];
+      clusterMaxEnd = e;
+    }
+  }
+  if (currentCluster.length > 0) {
+    clusters.push(currentCluster);
+  }
+
+  const packedResult: Array<T & { colIndex: number; totalCols: number }> = [];
+
+  for (const cluster of clusters) {
+    const colEndTimes: number[] = [];
+    const assignedCols: { ev: T; colIndex: number }[] = [];
+
+    for (const ev of cluster) {
+      const s = timeToMinutes(ev.startTime);
+      const e = Math.max(s + 15, timeToMinutes(ev.endTime));
+      let placedCol = -1;
+
+      for (let c = 0; c < colEndTimes.length; c++) {
+        if (colEndTimes[c] <= s) {
+          placedCol = c;
+          colEndTimes[c] = e;
+          break;
+        }
+      }
+
+      if (placedCol === -1) {
+        placedCol = colEndTimes.length;
+        colEndTimes.push(e);
+      }
+
+      assignedCols.push({ ev, colIndex: placedCol });
+    }
+
+    const totalCols = Math.max(1, colEndTimes.length);
+    for (const item of assignedCols) {
+      packedResult.push({
+        ...item.ev,
+        colIndex: item.colIndex,
+        totalCols,
+      });
+    }
+  }
+
+  return packedResult;
+}
+
+/**
+ * Checks whether an alarm is scheduled to occur on a given "YYYY-MM-DD" date (before applying leadMinutes).
+ */
+export function doesAlarmMatchDate(alarm: AlarmReminder, dateStr: string): boolean {
+  if (!alarm.enabled) return false;
+
+  if (alarm.recurrence === 'once') {
+    return alarm.date === dateStr;
+  }
+  if (alarm.recurrence === 'daily') {
+    return true;
+  }
+  const dayOfWeek = getWeekDayIndex(dateStr);
+  if (alarm.recurrence === 'weekdays') {
+    return alarm.daysOfWeek.includes(dayOfWeek);
+  }
+  if (alarm.recurrence === 'weekly') {
+    if (alarm.daysOfWeek.length > 0) {
+      return alarm.daysOfWeek.includes(dayOfWeek);
+    }
+    const anchorDay = getWeekDayIndex(alarm.date);
+    return dayOfWeek === anchorDay;
+  }
+  if (alarm.recurrence === 'monthly') {
+    const d1 = getDate(parseLocalDateTime(alarm.date, '12:00'));
+    const d2 = getDate(parseLocalDateTime(dateStr, '12:00'));
+    return d1 === d2;
+  }
+  return false;
+}
+
+/**
+ * Checks if a given "HH:mm" time falls inside quiet hours (which may cross midnight, e.g., 23:00 -> 06:30).
+ */
+export function isInQuietHours(
+  timeStr: string,
+  quietStart: string,
+  quietEnd: string
+): boolean {
+  const tMin = timeToMinutes(timeStr);
+  const sMin = timeToMinutes(quietStart);
+  const eMin = timeToMinutes(quietEnd);
+  if (sMin === eMin) return false;
+  if (sMin < eMin) {
+    return tMin >= sMin && tMin < eMin;
+  }
+  // Crosses midnight
+  return tMin >= sMin || tMin < eMin;
+}
+
+/**
+ * Evaluates whether an alarm should fire at the exact current local date+time or via active snooze.
+ */
+export function isAlarmDueNow(
+  alarm: AlarmReminder,
+  nowDateStr: string,
+  nowTimeStr: string,
+  nowMs: number,
+  quietHours?: { enabled: boolean; start: string; end: string }
+): boolean {
+  if (!alarm.enabled) return false;
+
+  if (quietHours?.enabled && isInQuietHours(nowTimeStr, quietHours.start, quietHours.end)) {
+    return false;
+  }
+
+  // Check if snoozed and snooze timer reached
+  if (typeof alarm.snoozedUntilMs === 'number' && nowMs >= alarm.snoozedUntilMs) {
+    return true;
+  }
+
+  // Compute effective trigger date/time considering leadMinutes (e.g. 10m before, 1440m = 1d before)
+  const targetNow = parseLocalDateTime(nowDateStr, nowTimeStr);
+  const eventMoment = addMinutes(targetNow, alarm.leadMinutes || 0);
+  const eventDateStr = format(eventMoment, 'yyyy-MM-dd');
+  const eventTimeStr = format(eventMoment, 'HH:mm');
+
+  if (eventTimeStr !== alarm.time) return false;
+  if (!doesAlarmMatchDate(alarm, eventDateStr)) return false;
+
+  const fireKey = `${nowDateStr}T${nowTimeStr}`;
+  if (alarm.lastFiredDateKey === fireKey) return false;
+
+  return true;
+}
+
+/**
+ * Finds alarms that were missed while the app/device was closed between `lastCheckedMs` and `nowMs`.
+ * Evaluates up to the last 24 hours in 1-minute steps so DST and date rollovers are respected.
+ */
+export function findMissedAlarms(
+  alarms: AlarmReminder[],
+  lastCheckedMs: number,
+  nowMs: number,
+  timezone?: string
+): MissedAlarmItem[] {
+  if (nowMs <= lastCheckedMs) return [];
+  const enabledAlarms = alarms.filter((a) => a.enabled);
+  if (enabledAlarms.length === 0) return [];
+
+  // Clamp lookback window to at most 12 hours to stay fast
+  const maxLookbackMs = 12 * 60 * 60 * 1000;
+  const startMs = Math.max(lastCheckedMs + 60_000, nowMs - maxLookbackMs);
+  const missedMap = new Map<string, MissedAlarmItem>();
+
+  // Step minute-by-minute up to 1 minute before nowMs (current minute is handled by live ringing)
+  for (let ts = startMs; ts < nowMs - 30_000; ts += 60_000) {
+    const d = new Date(ts);
+    const dateStr = getLocalDateString(d, timezone);
+    const timeStr = getLocalTimeString(d, timezone);
+
+    for (const alarm of enabledAlarms) {
+      if (missedMap.has(alarm.id)) continue;
+      if (isAlarmDueNow(alarm, dateStr, timeStr, ts)) {
+        missedMap.set(alarm.id, {
+          alarmId: alarm.id,
+          title: alarm.title,
+          scheduledDate: dateStr,
+          scheduledTime: timeStr,
+          linkedType: alarm.linkedType,
+          linkedId: alarm.linkedId,
+        });
+      }
+    }
+  }
+
+  return Array.from(missedMap.values());
+}
+
+/**
+ * Computes the grade needed on the next exam to reach a desired target average.
+ */
+export function computeTargetExamGrade(
+  currentAverage: number,
+  currentTotalCoeff: number,
+  targetAverage: number,
+  nextExamCoeff: number,
+  scaleOutOf: number = 20
+): { neededGrade: number; achievable: boolean; alreadyReached: boolean } {
+  const safeNextCoeff = Math.max(0.5, nextExamCoeff);
+  const safeCurrentCoeff = Math.max(0, currentTotalCoeff);
+  const totalPointsNeeded = targetAverage * (safeCurrentCoeff + safeNextCoeff);
+  const currentPoints = currentAverage * safeCurrentCoeff;
+  const rawNeeded = (totalPointsNeeded - currentPoints) / safeNextCoeff;
+  const neededGrade = Math.max(0, Number(rawNeeded.toFixed(2)));
+  return {
+    neededGrade,
+    achievable: neededGrade <= scaleOutOf,
+    alreadyReached: rawNeeded <= 0,
+  };
+}
+
+/**
+ * Parses natural-language quick-capture input in English, French, or Arabic.
+ * Examples:
+ * - "Math exam Friday 09:00"
+ * - "امتحان فيزياء غدا 10:00"
+ * - "devoir de français demain 18:00"
+ */
+export function parseQuickCaptureInput(
+  rawText: string,
+  _lang: Language,
+  todayStr: string,
+  subjects: Subject[]
+): {
+  kind: 'exam' | 'task' | 'alarm';
+  title: string;
+  date: string;
+  time: string;
+  subjectId: string;
+} {
+  const text = rawText.trim();
+  const lower = text.toLowerCase();
+
+  // Detect kind (exam vs alarm vs task)
+  const isExam = /\b(exam|examen|contrôle|controle|test|quiz|ds)\b|امتحان|اختبار|فرض/i.test(text);
+  const isAlarm = /\b(alarm|remind|reminder|rappel|alarme)\b|منبه|تذكير/i.test(text);
+  const kind: 'exam' | 'task' | 'alarm' = isExam ? 'exam' : isAlarm ? 'alarm' : 'task';
+
+  // Extract HH:mm time if present
+  const timeMatch = text.match(/\b([01]?\d|2[0-3]):([0-5]\d)\b/);
+  const time = timeMatch
+    ? `${timeMatch[1].padStart(2, '0')}:${timeMatch[2]}`
+    : isExam
+      ? '09:00'
+      : '18:00';
+
+  // Detect relative date or weekday
+  let date = todayStr;
+  if (/\b(tomorrow|demain)\b|غدا|غداً/i.test(text)) {
+    date = shiftDateString(todayStr, 1);
+  } else {
+    const weekdayPatterns: { day: WeekDay; regex: RegExp }[] = [
+      { day: 0, regex: /\b(sunday|dimanche)\b|الأحد|الاحد/i },
+      { day: 1, regex: /\b(monday|lundi)\b|الاثنين|الإثنين/i },
+      { day: 2, regex: /\b(tuesday|mardi)\b|الثلاثاء/i },
+      { day: 3, regex: /\b(wednesday|mercredi)\b|الأربعاء|الاربعاء/i },
+      { day: 4, regex: /\b(thursday|jeudi)\b|الخميس/i },
+      { day: 5, regex: /\b(friday|vendredi)\b|الجمعة/i },
+      { day: 6, regex: /\b(saturday|samedi)\b|السبت/i },
+    ];
+    for (const wp of weekdayPatterns) {
+      if (wp.regex.test(text)) {
+        const currentDow = getWeekDayIndex(todayStr);
+        let delta = (wp.day - currentDow + 7) % 7;
+        if (delta === 0) delta = 7;
+        date = shiftDateString(todayStr, delta);
+        break;
+      }
+    }
+  }
+
+  // Match subject by name substring
+  let matchedSubjectId = subjects[0]?.id ?? '';
+  for (const subj of subjects) {
+    const sLower = subj.name.toLowerCase();
+    const firstWord = sLower.split(/\s+/)[0] ?? '';
+    if ((firstWord.length >= 3 && lower.includes(firstWord)) || lower.includes(sLower)) {
+      matchedSubjectId = subj.id;
+      break;
+    }
+  }
+
+  return {
+    kind,
+    title: text,
+    date,
+    time,
+    subjectId: matchedSubjectId,
+  };
+}
+
+/**
+ * Generates an RFC 5545 `.ics` iCalendar string for classes, exams, and tasks.
+ */
+export function generateIcsContent(
+  timetable: TimetableSlot[],
+  exams: Exam[],
+  tasks: StudyTask[],
+  subjects: Subject[],
+  todayStr: string
+): string {
+  const lines: string[] = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//Waqti Study Planner//NONSGML v2.0//EN',
+    'CALSCALE:GREGORIAN',
+  ];
+
+  const toIcsDateTime = (dStr: string, tStr: string): string => {
+    const cleanD = dStr.replace(/-/g, '');
+    const cleanT = (tStr || '09:00').replace(':', '') + '00';
+    return `${cleanD}T${cleanT}`;
+  };
+
+  for (const ex of exams) {
+    const subj = subjects.find((s) => s.id === ex.subjectId);
+    const startDt = parseLocalDateTime(ex.date, ex.startTime);
+    const endDt = addMinutes(startDt, ex.durationMinutes || 90);
+    const endTimeStr = format(endDt, 'HH:mm');
+
+    lines.push(
+      'BEGIN:VEVENT',
+      `UID:waqti-exam-${ex.id}@waqti.app`,
+      `DTSTART:${toIcsDateTime(ex.date, ex.startTime)}`,
+      `DTEND:${toIcsDateTime(ex.date, endTimeStr)}`,
+      `SUMMARY:[Exam] ${ex.title} (${subj?.name ?? ''})`,
+      `LOCATION:${ex.room || ''}`,
+      'END:VEVENT'
+    );
+  }
+
+  for (const tk of tasks) {
+    lines.push(
+      'BEGIN:VEVENT',
+      `UID:waqti-task-${tk.id}@waqti.app`,
+      `DTSTART:${toIcsDateTime(tk.dueDate, tk.dueTime)}`,
+      `DTEND:${toIcsDateTime(tk.dueDate, tk.dueTime)}`,
+      `SUMMARY:[Task] ${tk.title}`,
+      'END:VEVENT'
+    );
+  }
+
+  // Export current week's classes
+  const weekDates = getWeekDates(todayStr, 1);
+  for (const dStr of weekDates) {
+    const dow = getWeekDayIndex(dStr);
+    const daySlots = timetable.filter((s) => s.dayOfWeek === dow);
+    for (const slot of daySlots) {
+      const subj = subjects.find((s) => s.id === slot.subjectId);
+      lines.push(
+        'BEGIN:VEVENT',
+        `UID:waqti-slot-${slot.id}-${dStr}@waqti.app`,
+        `DTSTART:${toIcsDateTime(dStr, slot.startTime)}`,
+        `DTEND:${toIcsDateTime(dStr, slot.endTime)}`,
+        `SUMMARY:${subj?.name ?? 'Class'}`,
+        `LOCATION:${slot.room || ''}`,
+        'END:VEVENT'
+      );
+    }
+  }
+
+  lines.push('END:VCALENDAR');
+  return lines.join('\r\n');
+}
+
+export { endOfMonth, isAfter, isBefore, isSameDay, subMinutes };

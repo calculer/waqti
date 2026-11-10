@@ -2,15 +2,20 @@ import React, { useState } from 'react';
 import {
   Bell,
   Check,
+  Database,
   Download,
+  History,
   RotateCcw,
   Trash2,
   Upload,
+  Volume2,
 } from 'lucide-react';
 import { useWaqtiStore } from '../store/useWaqtiStore';
 import { useTranslation } from '../hooks/useTranslation';
 import { getOrderedWeekdays } from '../lib/dates';
-import type { AccentTheme, Language, ThemeMode, WeekDay } from '../types';
+import { ACCENT_THEMES } from '../lib/colors';
+import { soundEngine } from '../lib/sound';
+import type { AlarmTone, Language, ThemeMode, WeekDay } from '../types';
 
 const COMMON_TIMEZONES = [
   'UTC',
@@ -28,17 +33,28 @@ const COMMON_TIMEZONES = [
 ];
 
 export const SettingsView: React.FC = () => {
-  const { t, lang } = useTranslation();
+  const { t, lang, digits } = useTranslation();
   const settings = useWaqtiStore((s) => s.settings);
+  const snapshots = useWaqtiStore((s) => s.snapshots);
   const setLanguage = useWaqtiStore((s) => s.setLanguage);
   const updateSettings = useWaqtiStore((s) => s.updateSettings);
   const loadDemoWorkspace = useWaqtiStore((s) => s.loadDemoWorkspace);
   const clearAllData = useWaqtiStore((s) => s.clearAllData);
   const importWorkspaceJson = useWaqtiStore((s) => s.importWorkspaceJson);
+  const createSnapshot = useWaqtiStore((s) => s.createSnapshot);
+  const restoreSnapshot = useWaqtiStore((s) => s.restoreSnapshot);
 
   const [confirmReset, setConfirmReset] = useState(false);
 
   const weekdays = getOrderedWeekdays(lang, 0, 'EEEE');
+
+  const accentLabelKeyMap: Record<string, string> = {
+    honey: 'settings.accentHoney',
+    sand: 'settings.accentSand',
+    olive: 'settings.accentOlive',
+    terracotta: 'settings.accentTerracotta',
+    slate: 'settings.accentSlate',
+  };
 
   const handleExportJson = () => {
     const fullState = useWaqtiStore.getState();
@@ -67,8 +83,12 @@ export const SettingsView: React.FC = () => {
 
   const requestNotifications = async () => {
     if (typeof Notification === 'undefined') return;
-    const perm = await Notification.requestPermission();
-    updateSettings({ notificationsEnabled: perm === 'granted' });
+    try {
+      const perm = await Notification.requestPermission();
+      updateSettings({ notificationsEnabled: perm === 'granted' });
+    } catch {
+      // Ignore in restricted iframe
+    }
   };
 
   return (
@@ -134,21 +154,13 @@ export const SettingsView: React.FC = () => {
           </div>
         </div>
 
-        {/* 5 Signature Accent Themes */}
+        {/* 5 Signature Warm Accent Themes */}
         <div>
           <label className="block text-xs font-bold text-[var(--text-secondary)] mb-2.5">
             {t('settings.accent')}
           </label>
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
-            {(
-              [
-                { id: 'violet', hex: '#8B5CF6', label: 'Violet' },
-                { id: 'ocean', hex: '#0284C7', label: 'Ocean' },
-                { id: 'emerald', hex: '#10B981', label: 'Emerald' },
-                { id: 'rose', hex: '#F43F5E', label: 'Rose' },
-                { id: 'amber', hex: '#F59E0B', label: 'Amber' },
-              ] as { id: AccentTheme; hex: string; label: string }[]
-            ).map((ac) => (
+            {ACCENT_THEMES.map((ac) => (
               <button
                 key={ac.id}
                 type="button"
@@ -163,7 +175,7 @@ export const SettingsView: React.FC = () => {
                   className="h-4 w-4 rounded-full shrink-0"
                   style={{ backgroundColor: ac.hex }}
                 />
-                <span>{ac.label}</span>
+                <span className="truncate">{t(accentLabelKeyMap[ac.id] || ac.id)}</span>
               </button>
             ))}
           </div>
@@ -283,6 +295,136 @@ export const SettingsView: React.FC = () => {
         </div>
       </div>
 
+      {/* Alarm Defaults, Quiet Hours & Gamification */}
+      <div className="rounded-3xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6 space-y-5">
+        <h2 className="text-sm font-bold font-display text-[var(--text-primary)]">
+          {t('settings.alarmDefaults')}
+        </h2>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+          <div>
+            <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">
+              {t('alarms.sound')}
+            </label>
+            <div className="flex items-center gap-1.5">
+              <select
+                value={settings.defaultAlarmSound}
+                onChange={(e) =>
+                  updateSettings({ defaultAlarmSound: e.target.value as AlarmTone })
+                }
+                className="flex-1 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-2 text-xs font-medium text-[var(--text-primary)]"
+              >
+                {(
+                  [
+                    'soft_bell',
+                    'morning_chime',
+                    'marimba',
+                    'gentle_rise',
+                    'digital',
+                  ] as AlarmTone[]
+                ).map((tn) => (
+                  <option key={tn} value={tn}>
+                    {t(`alarms.tones.${tn}`)}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() =>
+                  soundEngine.playAlarmPreview(
+                    settings.defaultAlarmSound,
+                    settings.alarmVolume
+                  )
+                }
+                aria-label={t('alarms.previewSound')}
+                className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-2 text-[var(--accent-primary)] hover:border-[var(--accent-primary)]"
+              >
+                <Volume2 className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">
+              {t('settings.alarmVolume')} ({digits(Math.round(settings.alarmVolume * 100))}%)
+            </label>
+            <input
+              type="range"
+              min={0.1}
+              max={1}
+              step={0.05}
+              value={settings.alarmVolume}
+              onChange={(e) => updateSettings({ alarmVolume: parseFloat(e.target.value) })}
+              className="w-full accent-[var(--accent-primary)] h-2 rounded-lg cursor-pointer"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">
+              {t('settings.gamification')}
+            </label>
+            <button
+              type="button"
+              onClick={() =>
+                updateSettings({ gamificationEnabled: !settings.gamificationEnabled })
+              }
+              className={`w-full rounded-xl border py-2 px-3 text-xs font-semibold transition ${
+                settings.gamificationEnabled
+                  ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
+                  : 'border-[var(--border-subtle)] bg-[var(--bg-elevated)] text-[var(--text-secondary)]'
+              }`}
+            >
+              {settings.gamificationEnabled ? 'ON' : 'OFF'}
+            </button>
+          </div>
+        </div>
+
+        {/* Quiet Hours */}
+        <div className="pt-3 border-t border-[var(--border-subtle)] grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
+          <div>
+            <button
+              type="button"
+              onClick={() =>
+                updateSettings({ quietHoursEnabled: !settings.quietHoursEnabled })
+              }
+              className={`w-full rounded-xl border py-2 px-3 text-xs font-semibold transition ${
+                settings.quietHoursEnabled
+                  ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
+                  : 'border-[var(--border-subtle)] bg-[var(--bg-elevated)] text-[var(--text-secondary)]'
+              }`}
+            >
+              {t('alarms.quietHours')}: {settings.quietHoursEnabled ? 'ON' : 'OFF'}
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-[var(--text-muted)]">
+              {t('alarms.quietHoursStart')}:
+            </span>
+            <input
+              type="time"
+              dir="ltr"
+              value={settings.quietHoursStart}
+              onChange={(e) => updateSettings({ quietHoursStart: e.target.value })}
+              className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2.5 py-1.5 text-xs font-mono tabular-nums"
+            />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-[var(--text-muted)]">
+              {t('alarms.quietHoursEnd')}:
+            </span>
+            <input
+              type="time"
+              dir="ltr"
+              value={settings.quietHoursEnd}
+              onChange={(e) => updateSettings({ quietHoursEnd: e.target.value })}
+              className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2.5 py-1.5 text-xs font-mono tabular-nums"
+            />
+          </div>
+        </div>
+      </div>
+
       {/* Pomodoro & Notifications */}
       <div className="rounded-3xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6 space-y-4">
         <label className="block text-xs font-bold text-[var(--text-secondary)]">
@@ -337,6 +479,58 @@ export const SettingsView: React.FC = () => {
             <span>{t('settings.enableNotifications')}</span>
           </button>
         </div>
+      </div>
+
+      {/* Automatic Local Snapshots (Last 7) */}
+      <div className="rounded-3xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <Database className="h-4 w-4 text-[var(--accent-primary)]" />
+              <h2 className="text-sm font-bold font-display text-[var(--text-primary)]">
+                {t('settings.snapshotsTitle')}
+              </h2>
+            </div>
+            <p className="text-xs text-[var(--text-secondary)] mt-0.5">
+              {t('settings.snapshotsDesc')}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => createSnapshot()}
+            className="rounded-xl btn-primary-waqti px-3.5 py-2 text-xs font-semibold"
+          >
+            {t('settings.createSnapshot')}
+          </button>
+        </div>
+
+        {snapshots.length > 0 && (
+          <div className="space-y-2 pt-2">
+            {snapshots.map((snap) => (
+              <div
+                key={snap.id}
+                className="flex items-center justify-between rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3.5 py-2.5 text-xs"
+              >
+                <div className="flex items-center gap-2">
+                  <History className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
+                  <span className="font-semibold text-[var(--text-primary)]">
+                    {snap.label}
+                  </span>
+                  <span dir="ltr" className="text-[11px] font-mono text-[var(--text-muted)]">
+                    {snap.createdAt.slice(0, 16).replace('T', ' ')}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => restoreSnapshot(snap.id)}
+                  className="rounded-lg border border-[var(--accent-primary)] bg-[var(--accent-soft)] px-2.5 py-1 text-[11px] font-bold text-[var(--accent-primary)]"
+                >
+                  {t('settings.restoreSnapshot')}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Data Backup, Demo Restore & Reset */}

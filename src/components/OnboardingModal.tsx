@@ -2,9 +2,9 @@ import React, { useState } from 'react';
 import { Check, Sparkles, X } from 'lucide-react';
 import { useWaqtiStore } from '../store/useWaqtiStore';
 import { useTranslation } from '../hooks/useTranslation';
-import { WaqtiLogo } from './WaqtiLogo';
-import { SUBJECT_COLOR_LIST, SUBJECT_COLORS } from '../lib/colors';
-import type { AccentTheme, Language, SubjectColorId } from '../types';
+import { Logo } from './WaqtiLogo';
+import { ACCENT_THEMES, SUBJECT_COLOR_LIST, SUBJECT_COLORS } from '../lib/colors';
+import type { Language, SubjectColorId } from '../types';
 
 interface OnboardingModalProps {
   isOpen: boolean;
@@ -22,7 +22,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({ isOpen, onClos
 
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [newSubjName, setNewSubjName] = useState('');
-  const [newSubjColor, setNewSubjColor] = useState<SubjectColorId>('violet');
+  const [newSubjColor, setNewSubjColor] = useState<SubjectColorId>('honey');
 
   if (!isOpen) return null;
 
@@ -41,6 +41,14 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({ isOpen, onClos
     setNewSubjName('');
   };
 
+  const accentLabelKeyMap: Record<string, string> = {
+    honey: 'settings.accentHoney',
+    sand: 'settings.accentSand',
+    olive: 'settings.accentOlive',
+    terracotta: 'settings.accentTerracotta',
+    slate: 'settings.accentSlate',
+  };
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-4"
@@ -51,7 +59,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({ isOpen, onClos
       <div className="w-full max-w-xl rounded-3xl border border-[var(--border-strong)] bg-[var(--bg-surface)] p-6 md:p-8 shadow-2xl">
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
-            <WaqtiLogo size={38} />
+            <Logo size={40} variant="icon" animateIntro />
             <div>
               <h2 className="text-lg font-bold font-display text-[var(--text-primary)]">
                 {t('onboarding.welcome')}
@@ -125,16 +133,8 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({ isOpen, onClos
               <label className="block text-xs font-semibold text-[var(--text-secondary)] mb-2">
                 {t('settings.accent')}
               </label>
-              <div className="grid grid-cols-5 gap-2">
-                {(
-                  [
-                    { id: 'violet', hex: '#8B5CF6', name: 'Violet' },
-                    { id: 'ocean', hex: '#0284C7', name: 'Ocean' },
-                    { id: 'emerald', hex: '#10B981', name: 'Emerald' },
-                    { id: 'rose', hex: '#F43F5E', name: 'Rose' },
-                    { id: 'amber', hex: '#F59E0B', name: 'Amber' },
-                  ] as { id: AccentTheme; hex: string; name: string }[]
-                ).map((ac) => (
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                {ACCENT_THEMES.map((ac) => (
                   <button
                     key={ac.id}
                     type="button"
@@ -149,7 +149,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({ isOpen, onClos
                       className="h-3.5 w-3.5 rounded-full shrink-0"
                       style={{ backgroundColor: ac.hex }}
                     />
-                    <span className="truncate">{ac.name}</span>
+                    <span className="truncate">{t(accentLabelKeyMap[ac.id] || ac.id)}</span>
                   </button>
                 ))}
               </div>
@@ -159,16 +159,16 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({ isOpen, onClos
 
         {step === 2 && (
           <div className="space-y-4">
-            <form onSubmit={handleAddQuickSubject} className="flex items-center gap-2">
+            <form onSubmit={handleAddQuickSubject} className="flex flex-wrap items-center gap-2">
               <input
                 type="text"
                 value={newSubjName}
                 onChange={(e) => setNewSubjName(e.target.value)}
                 placeholder={t('subjects.name')}
-                className="flex-1 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3.5 py-2.5 text-sm text-[var(--text-primary)]"
+                className="flex-1 min-w-[160px] rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3.5 py-2.5 text-sm text-[var(--text-primary)]"
               />
-              <div className="flex items-center gap-1">
-                {SUBJECT_COLOR_LIST.slice(0, 4).map((c) => (
+              <div className="flex items-center gap-1.5">
+                {SUBJECT_COLOR_LIST.slice(0, 6).map((c) => (
                   <button
                     key={c}
                     type="button"
@@ -182,7 +182,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({ isOpen, onClos
               </div>
               <button
                 type="submit"
-                className="rounded-xl bg-[var(--accent-primary)] px-4 py-2.5 text-xs font-semibold text-white whitespace-nowrap"
+                className="rounded-xl btn-primary-waqti px-4 py-2.5 text-xs font-semibold whitespace-nowrap"
               >
                 + {t('subjects.add')}
               </button>
@@ -195,7 +195,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({ isOpen, onClos
                   className="flex items-center justify-between rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3.5 py-2.5 text-sm"
                 >
                   <div className="flex items-center gap-2.5">
-                    <span className={`h-3 w-3 rounded-full ${SUBJECT_COLORS[subj.color].dot}`} />
+                    <span className={`h-3 w-3 rounded-full ${SUBJECT_COLORS[subj.color]?.dot ?? SUBJECT_COLORS.honey.dot}`} />
                     <span className="font-medium text-[var(--text-primary)]">{subj.name}</span>
                   </div>
                   <span className="text-xs text-[var(--text-muted)]">
@@ -290,7 +290,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({ isOpen, onClos
             <button
               type="button"
               onClick={() => setStep((s) => (s + 1) as 1 | 2 | 3)}
-              className="rounded-xl bg-[var(--accent-primary)] px-5 py-2.5 text-xs font-semibold text-white"
+              className="rounded-xl btn-primary-waqti px-5 py-2.5 text-xs font-semibold"
             >
               {t('onboarding.next')}
             </button>
@@ -301,7 +301,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({ isOpen, onClos
                 updateSettings({ hasCompletedOnboarding: true });
                 onClose();
               }}
-              className="rounded-xl bg-[var(--accent-primary)] px-6 py-2.5 text-xs font-semibold text-white"
+              className="rounded-xl btn-primary-waqti px-6 py-2.5 text-xs font-semibold"
             >
               {t('onboarding.finish')}
             </button>

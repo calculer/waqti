@@ -1,91 +1,274 @@
 import React, { useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import {
+  BellRing,
+  BookOpen,
+  Calendar as CalendarIcon,
+  CheckSquare,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  Flame,
+  GraduationCap,
+  Layers,
+  Plus,
+  Sparkles,
+} from 'lucide-react';
 import { useWaqtiStore } from '../store/useWaqtiStore';
 import { useTranslation } from '../hooks/useTranslation';
 import {
+  computeExamCountdown,
+  doesAlarmMatchDate,
+  formatHijriDate,
   formatLocalizedDate,
+  getLocalTimeString,
   getMonthCalendarGrid,
   getOrderedWeekdays,
   getWeekDates,
   getWeekDayIndex,
+  packOverlappingEvents,
   shiftDateString,
   shiftMonthString,
+  summarizeMonthCellEvents,
+  timeToMinutes,
 } from '../lib/dates';
-import { SUBJECT_COLORS } from '../lib/colors';
+import { getSubjectColor } from '../lib/colors';
+import type { QuickAddTab } from '../components/QuickAddModal';
 
-export const CalendarView: React.FC = () => {
-  const { t, lang, dir, digitsStyle, digits, formatRange, formatTime } = useTranslation();
+type CalendarMode = 'month' | 'week' | 'day' | 'agenda';
+type EventFilterKey = 'classes' | 'exams' | 'tasks' | 'habits' | 'alarms';
+
+interface CalendarEventItem {
+  id: string;
+  kind: 'class' | 'exam' | 'task' | 'alarm';
+  title: string;
+  startTime: string;
+  endTime: string;
+  subjectId?: string;
+  colorId: string;
+  room?: string;
+  countdownLabel?: string;
+}
+
+export const CalendarView: React.FC<{
+  onOpenQuickAdd?: (tab?: QuickAddTab, dateStr?: string) => void;
+}> = ({ onOpenQuickAdd }) => {
+  const { t, lang, dir, digitsStyle, timeFormat, digits, formatRange, formatTime } =
+    useTranslation();
+
   const todayStr = useWaqtiStore((s) => s.todayStr);
-  const weekStart = useWaqtiStore((s) => s.settings.weekStart);
+  const settings = useWaqtiStore((s) => s.settings);
   const subjects = useWaqtiStore((s) => s.subjects);
   const timetable = useWaqtiStore((s) => s.timetable);
   const exams = useWaqtiStore((s) => s.exams);
   const tasks = useWaqtiStore((s) => s.tasks);
   const habits = useWaqtiStore((s) => s.habits);
+  const alarms = useWaqtiStore((s) => s.alarms);
 
-  const [viewMode, setViewMode] = useState<'month' | 'week' | 'day' | 'agenda'>('month');
-  const [cursorDate, setCursorDate] = useState(todayStr);
+  const [mode, setMode] = useState<CalendarMode>('month');
+  const [cursorDate, setCursorDate] = useState<string>(todayStr);
+  const [selectedDay, setSelectedDay] = useState<string>(todayStr);
+  const [heatTintEnabled, setHeatTintEnabled] = useState<boolean>(false);
+  const [filters, setFilters] = useState<Record<EventFilterKey, boolean>>({
+    classes: true,
+    exams: true,
+    tasks: true,
+    habits: true,
+    alarms: true,
+  });
+
+  const toggleFilter = (key: EventFilterKey) => {
+    setFilters((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
 
   const orderedWeekdays = useMemo(
-    () => getOrderedWeekdays(lang, weekStart, 'EEE'),
-    [lang, weekStart]
+    () => getOrderedWeekdays(lang, settings.weekStart, 'EEE'),
+    [lang, settings.weekStart]
   );
 
   const monthGrid = useMemo(
-    () => getMonthCalendarGrid(cursorDate, weekStart),
-    [cursorDate, weekStart]
+    () => getMonthCalendarGrid(cursorDate, settings.weekStart),
+    [cursorDate, settings.weekStart]
   );
 
   const weekDates = useMemo(
-    () => getWeekDates(cursorDate, weekStart),
-    [cursorDate, weekStart]
+    () => getWeekDates(cursorDate, settings.weekStart),
+    [cursorDate, settings.weekStart]
   );
 
+  const currentMonthPrefix = cursorDate.slice(0, 7);
+
+  // Build unified event list for any given YYYY-MM-DD date respecting active filters
+  const getEventsForDate = (dateStr: string): CalendarEventItem[] => {
+    const dow = getWeekDayIndex(dateStr);
+    const items: CalendarEventItem[] = [];
+
+    if (filters.exams) {
+      for (const ex of exams) {
+        if (ex.date === dateStr) {
+          const subj = subjects.find((s) => s.id === ex.subjectId);
+          const endMins = timeToMinutes(ex.startTime) + (ex.durationMinutes || 90);
+          const endH = String(Math.min(23, Math.floor(endMins / 60))).padStart(2, '0');
+          const endM = String(endMins % 60).padStart(2, '0');
+          const cd = computeExamCountdown(
+            ex.date,
+            ex.startTime,
+            new Date(),
+            lang,
+            timeFormat,
+            digitsStyle
+          );
+          items.push({
+            id: `exam-${ex.id}`,
+            kind: 'exam',
+            title: ex.title,
+            startTime: ex.startTime,
+            endTime: `${endH}:${endM}`,
+            subjectId: ex.subjectId,
+            colorId: subj?.color ?? 'terracotta',
+            room: ex.room,
+            countdownLabel: cd.label,
+          });
+        }
+      }
+    }
+
+    if (filters.classes) {
+      for (const sl of timetable) {
+        if (sl.dayOfWeek === dow && !sl.excludedDates?.includes(dateStr)) {
+          const subj = subjects.find((s) => s.id === sl.subjectId);
+          items.push({
+            id: `class-${sl.id}-${dateStr}`,
+            kind: 'class',
+            title: subj?.name ?? 'Class',
+            startTime: sl.startTime,
+            endTime: sl.endTime,
+            subjectId: sl.subjectId,
+            colorId: sl.customColor ?? subj?.color ?? 'honey',
+            room: sl.room,
+          });
+        }
+      }
+    }
+
+    if (filters.tasks) {
+      for (const tk of tasks) {
+        if (tk.dueDate === dateStr) {
+          const subj = subjects.find((s) => s.id === tk.subjectId);
+          const startMins = timeToMinutes(tk.dueTime || '18:00');
+          const endMins = Math.min(23 * 60 + 59, startMins + 45);
+          const endT = `${String(Math.floor(endMins / 60)).padStart(2, '0')}:${String(
+            endMins % 60
+          ).padStart(2, '0')}`;
+          items.push({
+            id: `task-${tk.id}`,
+            kind: 'task',
+            title: tk.title,
+            startTime: tk.dueTime || '18:00',
+            endTime: endT,
+            subjectId: tk.subjectId,
+            colorId: subj?.color ?? 'amber',
+          });
+        }
+      }
+    }
+
+    if (filters.alarms) {
+      for (const al of alarms) {
+        if (doesAlarmMatchDate(al, dateStr)) {
+          const startMins = timeToMinutes(al.time);
+          const endMins = Math.min(23 * 60 + 59, startMins + 30);
+          const endT = `${String(Math.floor(endMins / 60)).padStart(2, '0')}:${String(
+            endMins % 60
+          ).padStart(2, '0')}`;
+          items.push({
+            id: `alarm-${al.id}-${dateStr}`,
+            kind: 'alarm',
+            title: al.title,
+            startTime: al.time,
+            endTime: endT,
+            colorId: 'honey',
+          });
+        }
+      }
+    }
+
+    return items.sort((a, b) => a.startTime.localeCompare(b.startTime));
+  };
+
   const handlePrev = () => {
-    if (viewMode === 'month') setCursorDate((d) => shiftMonthString(d, -1));
-    else if (viewMode === 'week') setCursorDate((d) => shiftDateString(d, -7));
-    else setCursorDate((d) => shiftDateString(d, -1));
+    if (mode === 'month') {
+      setCursorDate((d) => shiftMonthString(d, -1));
+    } else if (mode === 'week') {
+      setCursorDate((d) => shiftDateString(d, -7));
+    } else {
+      const next = shiftDateString(cursorDate, -1);
+      setCursorDate(next);
+      setSelectedDay(next);
+    }
   };
 
   const handleNext = () => {
-    if (viewMode === 'month') setCursorDate((d) => shiftMonthString(d, 1));
-    else if (viewMode === 'week') setCursorDate((d) => shiftDateString(d, 7));
-    else setCursorDate((d) => shiftDateString(d, 1));
-  };
-
-  const getEventsForDate = (dateStr: string) => {
-    const dow = getWeekDayIndex(dateStr);
-    const dayClasses = timetable.filter((s) => s.dayOfWeek === dow);
-    const dayExams = exams.filter((e) => e.date === dateStr);
-    const dayTasks = tasks.filter((tk) => tk.dueDate === dateStr);
-    const dayHabits = habits.filter((h) => h.completedDates.includes(dateStr));
-    return { dayClasses, dayExams, dayTasks, dayHabits };
+    if (mode === 'month') {
+      setCursorDate((d) => shiftMonthString(d, 1));
+    } else if (mode === 'week') {
+      setCursorDate((d) => shiftDateString(d, 7));
+    } else {
+      const next = shiftDateString(cursorDate, 1);
+      setCursorDate(next);
+      setSelectedDay(next);
+    }
   };
 
   const selectedDayEvents = useMemo(
-    () => getEventsForDate(cursorDate),
-    [cursorDate, timetable, exams, tasks, habits]
+    () => getEventsForDate(selectedDay),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectedDay, exams, timetable, tasks, alarms, subjects, filters, lang, timeFormat, digitsStyle]
+  );
+
+  const selectedDayHabits = useMemo(() => {
+    if (!filters.habits) return [];
+    return habits.map((h) => ({
+      ...h,
+      doneOnDay: h.completedDates.includes(selectedDay),
+    }));
+  }, [habits, selectedDay, filters.habits]);
+
+  const nowTimeStr = getLocalTimeString(new Date(), settings.timezone);
+  const nowMinutes = timeToMinutes(nowTimeStr);
+  const gridStartHour = 7;
+  const gridEndHour = 22;
+  const totalGridMinutes = (gridEndHour - gridStartHour) * 60;
+  const nowTopPercent = Math.max(
+    0,
+    Math.min(100, ((nowMinutes - gridStartHour * 60) / totalGridMinutes) * 100)
   );
 
   return (
-    <div className="space-y-6">
-      {/* Header & Controls */}
+    <div className="space-y-5">
+      {/* Top Header: Title, Navigation Controls, View Switcher */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold font-display text-[var(--text-primary)]">
-            {t('calendar.title')}
+            {formatLocalizedDate(cursorDate, lang, 'MMMM yyyy', digitsStyle)}
           </h1>
-          <p className="text-sm text-[var(--text-secondary)]">{t('calendar.subtitle')}</p>
+          <div className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+            <span>{t('calendar.title')}</span>
+            {settings.showHijri && (
+              <span className="text-[var(--accent-primary)] font-medium">
+                · {formatHijriDate(selectedDay, lang, digitsStyle)}
+              </span>
+            )}
+          </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2.5">
-          {/* Today Jump + Prev/Next */}
-          <div className="flex items-center gap-1 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-1">
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Prev / Today / Next */}
+          <div className="flex items-center rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-1">
             <button
               type="button"
               onClick={handlePrev}
               aria-label="Previous"
-              className="rounded-lg p-1.5 text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)]"
+              className="rounded-lg p-1.5 text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]"
             >
               {dir === 'rtl' ? (
                 <ChevronRight className="h-4 w-4" />
@@ -95,8 +278,11 @@ export const CalendarView: React.FC = () => {
             </button>
             <button
               type="button"
-              onClick={() => setCursorDate(todayStr)}
-              className="rounded-lg px-3 py-1 text-xs font-semibold text-[var(--accent-primary)] hover:bg-[var(--accent-soft)]"
+              onClick={() => {
+                setCursorDate(todayStr);
+                setSelectedDay(todayStr);
+              }}
+              className="px-3 py-1 text-xs font-semibold text-[var(--text-primary)] hover:text-[var(--accent-primary)]"
             >
               {t('calendar.today')}
             </button>
@@ -104,7 +290,7 @@ export const CalendarView: React.FC = () => {
               type="button"
               onClick={handleNext}
               aria-label="Next"
-              className="rounded-lg p-1.5 text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)]"
+              className="rounded-lg p-1.5 text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]"
             >
               {dir === 'rtl' ? (
                 <ChevronLeft className="h-4 w-4" />
@@ -114,185 +300,521 @@ export const CalendarView: React.FC = () => {
             </button>
           </div>
 
-          <div className="flex items-center rounded-xl bg-[var(--bg-elevated)] p-1">
-            {(['month', 'week', 'day', 'agenda'] as const).map((m) => (
+          {/* Mode Tabs */}
+          <div className="flex items-center rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-1">
+            {(
+              [
+                { id: 'month', label: t('calendar.month') },
+                { id: 'week', label: t('calendar.week') },
+                { id: 'day', label: t('calendar.day') },
+                { id: 'agenda', label: t('calendar.agenda') },
+              ] as const
+            ).map((m) => (
               <button
-                key={m}
+                key={m.id}
                 type="button"
-                onClick={() => setViewMode(m)}
-                className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
-                  viewMode === m
-                    ? 'bg-[var(--bg-surface)] text-[var(--text-primary)] shadow-sm'
-                    : 'text-[var(--text-secondary)]'
+                onClick={() => setMode(m.id)}
+                className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                  mode === m.id
+                    ? 'bg-[var(--accent-soft)] text-[var(--accent-primary)]'
+                    : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
                 }`}
               >
-                {t(`calendar.${m}`)}
+                {m.label}
               </button>
             ))}
           </div>
         </div>
       </div>
 
-      {/* Current Month/Date Heading */}
-      <div className="text-base font-bold text-[var(--text-primary)]">
-        {formatLocalizedDate(cursorDate, lang, 'MMMM yyyy', digitsStyle)}
+      {/* Filter Chips + Heat-Tint Toggle */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-4 py-2.5">
+        <div className="flex flex-wrap items-center gap-2">
+          {(
+            [
+              {
+                key: 'classes' as const,
+                label: t('calendar.filterClasses'),
+                icon: <BookOpen className="h-3.5 w-3.5" />,
+              },
+              {
+                key: 'exams' as const,
+                label: t('calendar.filterExams'),
+                icon: <GraduationCap className="h-3.5 w-3.5" />,
+              },
+              {
+                key: 'tasks' as const,
+                label: t('calendar.filterTasks'),
+                icon: <CheckSquare className="h-3.5 w-3.5" />,
+              },
+              {
+                key: 'habits' as const,
+                label: t('calendar.filterHabits'),
+                icon: <Flame className="h-3.5 w-3.5" />,
+              },
+              {
+                key: 'alarms' as const,
+                label: t('calendar.filterAlarms'),
+                icon: <BellRing className="h-3.5 w-3.5" />,
+              },
+            ]
+          ).map((f) => {
+            const active = filters[f.key];
+            return (
+              <button
+                key={f.key}
+                type="button"
+                onClick={() => toggleFilter(f.key)}
+                className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold transition ${
+                  active
+                    ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
+                    : 'border-[var(--border-subtle)] bg-[var(--bg-elevated)] text-[var(--text-muted)]'
+                }`}
+              >
+                {f.icon}
+                <span>{f.label}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setHeatTintEnabled((v) => !v)}
+          className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold transition ${
+            heatTintEnabled
+              ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
+              : 'border-[var(--border-subtle)] bg-[var(--bg-elevated)] text-[var(--text-secondary)]'
+          }`}
+        >
+          <Layers className="h-3.5 w-3.5" />
+          <span>{t('calendar.heatTint')}</span>
+        </button>
       </div>
 
-      {viewMode === 'month' || viewMode === 'week' ? (
-        <div className="rounded-3xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 md:p-6">
-          {/* Weekday Headers */}
-          <div className="grid grid-cols-7 gap-2 mb-3 text-center">
-            {orderedWeekdays.map((w) => (
-              <div
-                key={w.dayIndex}
-                className="text-xs font-semibold text-[var(--text-muted)] py-1"
-              >
-                {w.label}
-              </div>
-            ))}
-          </div>
-
-          {/* Calendar Cells */}
-          <div className="grid grid-cols-7 gap-2">
-            {(viewMode === 'month' ? monthGrid : weekDates).map((dStr) => {
-              const isToday = dStr === todayStr;
-              const isSelected = dStr === cursorDate;
-              const isCurrentMonth = dStr.slice(0, 7) === cursorDate.slice(0, 7);
-              const dayNumber = parseInt(dStr.slice(8, 10), 10);
-              const { dayClasses, dayExams, dayTasks, dayHabits } = getEventsForDate(dStr);
-
-              return (
-                <button
-                  key={dStr}
-                  type="button"
-                  onClick={() => setCursorDate(dStr)}
-                  className={`min-h-[76px] md:min-h-[96px] rounded-2xl border p-2.5 flex flex-col justify-between text-start transition ${
-                    isSelected
-                      ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)]'
-                      : isToday
-                        ? 'border-[var(--accent-primary)] bg-[var(--bg-elevated)]'
-                        : 'border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:border-[var(--border-strong)]'
-                  } ${!isCurrentMonth && viewMode === 'month' ? 'opacity-45' : ''}`}
-                >
-                  <div className="flex items-center justify-between w-full">
-                    <span
-                      className={`text-xs font-bold font-mono-tabular ${
-                        isToday ? 'text-[var(--accent-primary)]' : 'text-[var(--text-primary)]'
-                      }`}
-                    >
-                      {digits(dayNumber)}
-                    </span>
-                    {dayExams.length > 0 && (
-                      <span className="h-2 w-2 rounded-full bg-rose-500" />
-                    )}
+      {/* MONTH VIEW + SIDE AGENDA PANEL (Strictly Zero-Overflow Day Cells) */}
+      {mode === 'month' && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          {/* 7-Column Calendar Grid */}
+          <div className="lg:col-span-8 rounded-3xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 md:p-5 shadow-sm">
+            {/* Weekday Headers */}
+            <div className="grid grid-cols-7 gap-1.5 mb-2">
+              {orderedWeekdays.map((w) => {
+                const isWeekend = settings.weekendDays.includes(w.dayIndex);
+                return (
+                  <div
+                    key={w.dayIndex}
+                    className={`text-center text-[11px] font-bold uppercase tracking-wider py-1.5 rounded-lg ${
+                      isWeekend
+                        ? 'text-[var(--accent-primary)] bg-[var(--accent-soft)]/50'
+                        : 'text-[var(--text-muted)]'
+                    }`}
+                  >
+                    {w.label}
                   </div>
+                );
+              })}
+            </div>
 
-                  {/* Colored Event Dots & Mini Preview */}
-                  <div className="space-y-1 w-full overflow-hidden">
-                    {dayExams.slice(0, 1).map((ex) => (
-                      <div
-                        key={ex.id}
-                        className="truncate text-[10px] font-semibold text-rose-500"
+            {/* 42 Day Cells: Fixed Height + Overflow Hidden + Max 3 Dots + +N Badge */}
+            <div className="grid grid-cols-7 gap-1.5">
+              {monthGrid.map((dStr) => {
+                const isCurrentMonth = dStr.startsWith(currentMonthPrefix);
+                const isToday = dStr === todayStr;
+                const isSelected = dStr === selectedDay;
+                const dow = getWeekDayIndex(dStr);
+                const isWeekend = settings.weekendDays.includes(dow);
+                const dayNumber = parseInt(dStr.slice(8, 10), 10);
+
+                const dayEvents = getEventsForDate(dStr);
+                const { visibleDots, overflowCount } = summarizeMonthCellEvents(dayEvents, 3);
+                const hasExam = dayEvents.some((e) => e.kind === 'exam');
+
+                // Subtle heat tint when busyness toggle is enabled
+                const heatClass =
+                  heatTintEnabled && dayEvents.length >= 4
+                    ? 'bg-[var(--accent-soft)]'
+                    : heatTintEnabled && dayEvents.length >= 2
+                      ? 'bg-[var(--accent-soft)]/50'
+                      : isWeekend
+                        ? 'bg-[var(--bg-elevated)]/65'
+                        : 'bg-[var(--bg-elevated)]';
+
+                return (
+                  <button
+                    key={dStr}
+                    type="button"
+                    data-calendar-date={dStr}
+                    onClick={() => setSelectedDay(dStr)}
+                    className={`group relative min-h-[64px] sm:min-h-[82px] lg:min-h-[96px] rounded-2xl border p-2.5 flex flex-col justify-between text-start overflow-hidden transition ${heatClass} ${
+                      isSelected
+                        ? 'border-[var(--accent-primary)] ring-2 ring-[var(--accent-primary)]/30'
+                        : hasExam
+                          ? 'border-amber-500/50'
+                          : 'border-[var(--border-subtle)] hover:border-[var(--border-strong)]'
+                    } ${!isCurrentMonth ? 'opacity-40' : ''}`}
+                  >
+                    {/* Top Row: Day Number (Filled Honey Circle for Today) + Exam Badge Icon */}
+                    <div className="flex items-center justify-between w-full shrink-0">
+                      <span
+                        className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold tabular-nums ${
+                          isToday
+                            ? 'btn-primary-waqti shadow-sm'
+                            : isSelected
+                              ? 'text-[var(--accent-strong)] font-extrabold'
+                              : 'text-[var(--text-primary)]'
+                        }`}
                       >
-                        {ex.title}
-                      </div>
-                    ))}
-                    <div className="flex items-center gap-1 flex-wrap">
-                      {dayClasses.slice(0, 3).map((cl) => {
-                        const subj = subjects.find((s) => s.id === cl.subjectId);
-                        return (
-                          <span
-                            key={cl.id}
-                            className={`h-1.5 w-1.5 rounded-full ${
-                              SUBJECT_COLORS[subj?.color ?? 'violet'].dot
-                            }`}
-                          />
-                        );
-                      })}
-                      {dayTasks.length > 0 && (
-                        <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
-                      )}
-                      {dayHabits.length > 0 && (
-                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                        {digits(dayNumber)}
+                      </span>
+
+                      {hasExam && (
+                        <span
+                          title={t('nav.exams')}
+                          className="h-2 w-2 rotate-45 bg-amber-500 ring-2 ring-amber-500/30 shrink-0"
+                        />
                       )}
                     </div>
-                  </div>
-                </button>
-              );
-            })}
+
+                    {/* Bottom Row: Non-wrapping 6px Event Dots (Max 3) + "+N" Overflow Chip */}
+                    <div className="flex items-center justify-between gap-1 w-full shrink-0 pt-0.5">
+                      <div className="flex items-center gap-1 shrink-0">
+                        {visibleDots.map((ev) => {
+                          const cStyle = getSubjectColor(ev.colorId);
+                          const isEx = ev.kind === 'exam';
+                          return (
+                            <span
+                              key={ev.id}
+                              className={`h-1.5 w-1.5 shrink-0 ${
+                                isEx ? 'rotate-45 rounded-[1px]' : 'rounded-full'
+                              } ${cStyle.dot}`}
+                            />
+                          );
+                        })}
+                      </div>
+
+                      {overflowCount > 0 && (
+                        <span
+                          dir="ltr"
+                          className="rounded-md bg-[var(--bg-surface)] border border-[var(--border-subtle)] px-1 py-0.2 text-[9px] font-bold font-mono tabular-nums text-[var(--accent-primary)] leading-none shrink-0"
+                        >
+                          +{digits(overflowCount)}
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        </div>
-      ) : null}
 
-      {/* Selected Day / Agenda Detail Panel */}
-      <div className="rounded-3xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6 space-y-4">
-        <h2 className="text-base font-bold text-[var(--text-primary)]">
-          {formatLocalizedDate(cursorDate, lang, 'EEEE, d MMMM yyyy', digitsStyle)}
-        </h2>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {/* Classes */}
-          <div className="space-y-2">
-            <h3 className="text-xs font-semibold text-[var(--text-muted)]">
-              {t('nav.timetable')}
-            </h3>
-            {selectedDayEvents.dayClasses.map((cl) => {
-              const subj = subjects.find((s) => s.id === cl.subjectId);
-              return (
-                <div
-                  key={cl.id}
-                  className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-3 text-xs flex justify-between"
-                >
-                  <span className="font-semibold text-[var(--text-primary)] truncate">
-                    {subj?.name}
-                  </span>
-                  <span dir="ltr" className="font-mono-tabular text-[var(--text-secondary)] ms-2">
-                    {formatRange(cl.startTime, cl.endTime)}
-                  </span>
+          {/* Selected Day Agenda Popover / Side Panel */}
+          <div className="lg:col-span-4 rounded-3xl border border-[var(--border-strong)] bg-[var(--bg-surface)] p-5 space-y-4 shadow-sm lg:sticky lg:top-24">
+            <div className="flex items-start justify-between gap-3 border-b border-[var(--border-subtle)] pb-3.5">
+              <div>
+                <div className="text-[11px] font-bold uppercase tracking-wider text-[var(--accent-primary)]">
+                  {t('calendar.selectedDayAgenda')}
                 </div>
-              );
-            })}
-          </div>
-
-          {/* Exams */}
-          <div className="space-y-2">
-            <h3 className="text-xs font-semibold text-[var(--text-muted)]">{t('nav.exams')}</h3>
-            {selectedDayEvents.dayExams.map((ex) => (
-              <div
-                key={ex.id}
-                className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs flex justify-between"
-              >
-                <span className="font-semibold text-[var(--text-primary)] truncate">
-                  {ex.title}
-                </span>
-                <span dir="ltr" className="font-mono-tabular text-rose-500 ms-2">
-                  {formatTime(ex.startTime)}
-                </span>
+                <h2 className="text-base font-bold font-display text-[var(--text-primary)] mt-0.5">
+                  {formatLocalizedDate(selectedDay, lang, 'EEEE, d MMMM', digitsStyle)}
+                </h2>
+                {settings.showHijri && (
+                  <div className="text-xs text-[var(--text-muted)] mt-0.5">
+                    {formatHijriDate(selectedDay, lang, digitsStyle)}
+                  </div>
+                )}
               </div>
-            ))}
-          </div>
 
-          {/* Tasks */}
-          <div className="space-y-2">
-            <h3 className="text-xs font-semibold text-[var(--text-muted)]">
-              {t('lessons.tab.tasks')}
-            </h3>
-            {selectedDayEvents.dayTasks.map((tk) => (
-              <div
-                key={tk.id}
-                className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-3 text-xs flex justify-between"
-              >
-                <span className="font-semibold text-[var(--text-primary)] truncate">
-                  {tk.title}
-                </span>
-                <span dir="ltr" className="font-mono-tabular text-[var(--text-secondary)] ms-2">
-                  {formatTime(tk.dueTime)}
-                </span>
+              {onOpenQuickAdd && (
+                <button
+                  type="button"
+                  onClick={() => onOpenQuickAdd('task', selectedDay)}
+                  className="inline-flex items-center gap-1.5 rounded-xl btn-primary-waqti px-3 py-2 text-xs font-semibold shrink-0"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  <span>{t('calendar.addEventOnDay')}</span>
+                </button>
+              )}
+            </div>
+
+            {selectedDayEvents.length === 0 && selectedDayHabits.length === 0 ? (
+              <p className="text-xs text-[var(--text-muted)] py-8 text-center">
+                {t('calendar.noEventsDay')}
+              </p>
+            ) : (
+              <div className="space-y-2.5 max-h-[460px] overflow-y-auto pe-1">
+                {selectedDayEvents.map((ev) => {
+                  const cStyle = getSubjectColor(ev.colorId);
+                  return (
+                    <div
+                      key={ev.id}
+                      className={`rounded-2xl border p-3.5 transition ${cStyle.softBg} ${cStyle.border}`}
+                    >
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <span
+                          dir="ltr"
+                          className="text-xs font-mono tabular-nums font-bold text-[var(--text-primary)]"
+                        >
+                          {ev.kind === 'alarm' || ev.kind === 'task'
+                            ? formatTime(ev.startTime)
+                            : formatRange(ev.startTime, ev.endTime)}
+                        </span>
+
+                        <span
+                          className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-md bg-[var(--bg-surface)] ${cStyle.text}`}
+                        >
+                          {ev.kind === 'exam'
+                            ? t('nav.exams')
+                            : ev.kind === 'class'
+                              ? t('nav.timetable')
+                              : ev.kind === 'alarm'
+                                ? t('nav.alarms')
+                                : t('nav.lessons')}
+                        </span>
+                      </div>
+
+                      <div className="text-sm font-bold text-[var(--text-primary)]">
+                        {ev.title}
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-between gap-2 mt-1.5 text-xs text-[var(--text-secondary)]">
+                        {ev.room && <span>{ev.room}</span>}
+                        {ev.countdownLabel && (
+                          <span className="font-semibold text-[var(--accent-primary)]">
+                            {ev.countdownLabel}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {selectedDayHabits.length > 0 && (
+                  <div className="pt-2 border-t border-[var(--border-subtle)] space-y-2">
+                    <div className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
+                      {t('nav.habits')}
+                    </div>
+                    {selectedDayHabits.map((h) => (
+                      <div
+                        key={h.id}
+                        className="flex items-center justify-between rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-2 text-xs"
+                      >
+                        <span className="font-medium text-[var(--text-primary)] truncate">
+                          {h.name}
+                        </span>
+                        <span
+                          className={`font-bold ${
+                            h.doneOnDay ? 'text-emerald-600 dark:text-emerald-400' : 'text-[var(--text-muted)]'
+                          }`}
+                        >
+                          {h.doneOnDay ? '✓' : '○'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
-            ))}
+            )}
           </div>
         </div>
-      </div>
+      )}
+
+      {/* WEEK & DAY TIME-GRID VIEWS (With Side-By-Side Column Packing for Overlapping Events) */}
+      {(mode === 'week' || mode === 'day') && (
+        <div className="rounded-3xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden shadow-sm">
+          <div className="overflow-x-auto">
+            <div className="min-w-[680px]">
+              {/* Sticky Day Column Headers */}
+              <div
+                className={`grid border-b border-[var(--border-subtle)] bg-[var(--bg-elevated)] ${
+                  mode === 'week' ? 'grid-cols-8' : 'grid-cols-2'
+                }`}
+              >
+                <div className="p-3 text-center text-xs font-mono text-[var(--text-muted)] border-e border-[var(--border-subtle)]">
+                  GMT
+                </div>
+                {(mode === 'week' ? weekDates : [selectedDay]).map((dStr) => {
+                  const isToday = dStr === todayStr;
+                  return (
+                    <button
+                      key={dStr}
+                      type="button"
+                      onClick={() => setSelectedDay(dStr)}
+                      className={`p-3 text-center border-e last:border-e-0 border-[var(--border-subtle)] transition ${
+                        isToday ? 'bg-[var(--accent-soft)]' : ''
+                      }`}
+                    >
+                      <div className="text-xs font-bold text-[var(--text-primary)]">
+                        {formatLocalizedDate(dStr, lang, 'EEE d', digitsStyle)}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* 07:00 - 22:00 Time Grid */}
+              <div
+                className={`relative grid ${
+                  mode === 'week' ? 'grid-cols-8' : 'grid-cols-2'
+                }`}
+                style={{ height: '720px' }}
+              >
+                {/* Time Labels Column */}
+                <div className="border-e border-[var(--border-subtle)] bg-[var(--bg-elevated)]/40 flex flex-col justify-between py-2 px-2 text-end">
+                  {Array.from({ length: gridEndHour - gridStartHour + 1 }, (_, i) => {
+                    const hr = gridStartHour + i;
+                    const tStr = `${String(hr).padStart(2, '0')}:00`;
+                    return (
+                      <div
+                        key={hr}
+                        dir="ltr"
+                        className="text-[10px] font-mono tabular-nums text-[var(--text-muted)] leading-none"
+                      >
+                        {formatTime(tStr)}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Day Columns with Packed Events */}
+                {(mode === 'week' ? weekDates : [selectedDay]).map((dStr) => {
+                  const rawEvents = getEventsForDate(dStr);
+                  const packedEvents = packOverlappingEvents(rawEvents);
+                  const isToday = dStr === todayStr;
+
+                  return (
+                    <div
+                      key={dStr}
+                      className="relative border-e last:border-e-0 border-[var(--border-subtle)]"
+                    >
+                      {/* Horizontal Hour Guide Lines */}
+                      {Array.from({ length: gridEndHour - gridStartHour }, (_, i) => (
+                        <div
+                          key={i}
+                          className="border-b border-[var(--border-subtle)]/50 w-full"
+                          style={{ height: `${100 / (gridEndHour - gridStartHour)}%` }}
+                        />
+                      ))}
+
+                      {/* Glowing "Now" Line */}
+                      {isToday &&
+                        nowMinutes >= gridStartHour * 60 &&
+                        nowMinutes <= gridEndHour * 60 && (
+                          <div
+                            className="absolute inset-x-0 z-20 flex items-center pointer-events-none"
+                            style={{ top: `${nowTopPercent}%` }}
+                          >
+                            <span className="h-2.5 w-2.5 rounded-full bg-[var(--accent-primary)] -ms-1 shadow" />
+                            <div className="h-0.5 w-full bg-[var(--accent-primary)]" />
+                          </div>
+                        )}
+
+                      {/* Side-by-side Packed Event Blocks */}
+                      {packedEvents.map((ev) => {
+                        const sMin = Math.max(gridStartHour * 60, timeToMinutes(ev.startTime));
+                        const eMin = Math.min(
+                          gridEndHour * 60,
+                          Math.max(sMin + 30, timeToMinutes(ev.endTime))
+                        );
+                        const topPct = ((sMin - gridStartHour * 60) / totalGridMinutes) * 100;
+                        const heightPct = Math.max(
+                          5,
+                          ((eMin - sMin) / totalGridMinutes) * 100
+                        );
+                        const widthPct = 100 / ev.totalCols;
+                        const startPct = ev.colIndex * widthPct;
+                        const cStyle = getSubjectColor(ev.colorId);
+
+                        return (
+                          <div
+                            key={ev.id}
+                            style={{
+                              top: `${topPct}%`,
+                              height: `${heightPct}%`,
+                              width: `calc(${widthPct}% - 4px)`,
+                              insetInlineStart: `calc(${startPct}% + 2px)`,
+                            }}
+                            className={`absolute z-10 rounded-xl border p-1.5 overflow-hidden shadow-xs ${cStyle.softBg} ${cStyle.border}`}
+                          >
+                            <div
+                              dir="ltr"
+                              className="text-[10px] font-mono tabular-nums font-bold text-[var(--text-primary)] truncate"
+                            >
+                              {formatTime(ev.startTime)}
+                            </div>
+                            <div className={`text-xs font-bold truncate ${cStyle.text}`}>
+                              {ev.title}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CHRONOLOGICAL AGENDA VIEW */}
+      {mode === 'agenda' && (
+        <div className="rounded-3xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6 space-y-4">
+          {weekDates.map((dStr) => {
+            const evs = getEventsForDate(dStr);
+            return (
+              <div
+                key={dStr}
+                className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-4 space-y-3"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-bold font-display text-[var(--text-primary)]">
+                    {formatLocalizedDate(dStr, lang, 'EEEE, d MMMM', digitsStyle)}
+                  </span>
+                  {dStr === todayStr && (
+                    <span className="rounded-lg bg-[var(--accent-soft)] px-2.5 py-0.5 text-xs font-bold text-[var(--accent-primary)]">
+                      {t('calendar.today')}
+                    </span>
+                  )}
+                </div>
+
+                {evs.length === 0 ? (
+                  <p className="text-xs text-[var(--text-muted)]">{t('calendar.noEventsDay')}</p>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                    {evs.map((ev) => {
+                      const cStyle = getSubjectColor(ev.colorId);
+                      return (
+                        <div
+                          key={ev.id}
+                          className={`rounded-xl border p-3 flex items-center justify-between gap-3 ${cStyle.softBg} ${cStyle.border}`}
+                        >
+                          <div className="min-w-0">
+                            <div className="text-xs font-bold text-[var(--text-primary)] truncate">
+                              {ev.title}
+                            </div>
+                            {ev.room && (
+                              <div className="text-[11px] text-[var(--text-secondary)] truncate">
+                                {ev.room}
+                              </div>
+                            )}
+                          </div>
+                          <span
+                            dir="ltr"
+                            className="text-xs font-mono tabular-nums font-bold text-[var(--text-primary)] shrink-0"
+                          >
+                            {formatTime(ev.startTime)}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 };
