@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   Circle,
   Clock,
+  ExternalLink,
   Flame,
   Plus,
   Send,
@@ -24,10 +25,12 @@ import {
   formatLocalizedDate,
   getLocalTimeString,
   getWeekDayIndex,
+  isSlotActiveOnDate,
   parseQuickCaptureInput,
   timeToMinutes,
 } from '../lib/dates';
 import { getSubjectColor } from '../lib/colors';
+import { SessionMetaBadges } from '../components/SessionMetaBadges';
 import type { QuickAddTab } from '../components/QuickAddModal';
 import type { MoodCheckIn } from '../types';
 
@@ -105,9 +108,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   const todaySlots = useMemo(() => {
     return timetable
-      .filter((s) => s.dayOfWeek === todayDow)
+      .filter(
+        (s) =>
+          s.dayOfWeek === todayDow &&
+          isSlotActiveOnDate(s, todayStr, settings.weekStart)
+      )
       .sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
-  }, [timetable, todayDow]);
+  }, [timetable, todayDow, todayStr, settings.weekStart]);
 
   const nextClassSlot = useMemo(() => {
     return (
@@ -397,20 +404,30 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
 
           {/* Next Class Mini Summary */}
-          <div className="mt-5 pt-4 border-t border-[var(--border-subtle)] flex items-center justify-between gap-3">
+          <div className="mt-5 pt-4 border-t border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-3">
             <div className="min-w-0 flex-1">
               <div className="text-xs text-[var(--text-muted)]">{t('dashboard.nextClass')}</div>
               {nextClassSlot ? (
-                <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                  <span className="text-sm font-semibold text-[var(--text-primary)] truncate">
-                    {subjects.find((s) => s.id === nextClassSlot.subjectId)?.name}
-                  </span>
-                  <span
-                    dir="ltr"
-                    className="font-mono-tabular text-xs font-semibold text-[var(--accent-primary)] shrink-0"
-                  >
-                    {formatRange(nextClassSlot.startTime, nextClassSlot.endTime)}
-                  </span>
+                <div className="mt-1 space-y-1">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                    <span className="text-sm font-semibold text-[var(--text-primary)] truncate">
+                      {subjects.find((s) => s.id === nextClassSlot.subjectId)?.name}
+                    </span>
+                    <span
+                      dir="ltr"
+                      className="font-mono-tabular text-xs font-semibold text-[var(--accent-primary)] shrink-0"
+                    >
+                      {formatRange(nextClassSlot.startTime, nextClassSlot.endTime)}
+                    </span>
+                  </div>
+                  <SessionMetaBadges
+                    type={nextClassSlot.type}
+                    mode={nextClassSlot.mode}
+                    section={nextClassSlot.section}
+                    group={nextClassSlot.group}
+                    platform={nextClassSlot.platform}
+                    compact
+                  />
                 </div>
               ) : (
                 <div className="mt-0.5 text-xs text-[var(--text-secondary)]">
@@ -418,14 +435,31 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </div>
               )}
             </div>
-            <button
-              type="button"
-              onClick={() => setActiveNav('focus')}
-              className="flex items-center gap-1.5 rounded-xl btn-primary-waqti px-3.5 py-2 text-xs font-semibold transition whitespace-nowrap shrink-0"
-            >
-              <Timer className="h-3.5 w-3.5" />
-              <span>{t('nav.focus')}</span>
-            </button>
+
+            <div className="flex items-center gap-2 shrink-0">
+              {nextClassSlot &&
+                (nextClassSlot.mode === 'remote' || nextClassSlot.mode === 'hybrid') &&
+                nextClassSlot.meetingUrl && (
+                  <a
+                    href={nextClassSlot.meetingUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white px-3 py-2 text-xs font-semibold shadow-xs transition whitespace-nowrap"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    <span>{t('classMode.joinCall')}</span>
+                  </a>
+                )}
+
+              <button
+                type="button"
+                onClick={() => setActiveNav('focus')}
+                className="flex items-center gap-1.5 rounded-xl btn-primary-waqti px-3.5 py-2 text-xs font-semibold transition whitespace-nowrap shrink-0"
+              >
+                <Timer className="h-3.5 w-3.5" />
+                <span>{t('nav.focus')}</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -640,32 +674,58 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 const endM = timeToMinutes(slot.endTime);
                 const isCurrent =
                   currentMinutesFromMidnight >= startM && currentMinutesFromMidnight < endM;
+                const isRemote = slot.mode === 'remote' || slot.mode === 'hybrid';
 
                 return (
                   <div
                     key={slot.id}
-                    className={`flex items-center justify-between gap-4 rounded-2xl border p-4 transition ${
+                    className={`flex flex-wrap items-center justify-between gap-3 rounded-2xl border p-4 transition ${
                       isCurrent
                         ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)]'
                         : 'border-[var(--border-subtle)] bg-[var(--bg-elevated)]'
                     }`}
                   >
-                    <div className="flex items-center gap-3.5 min-w-0">
-                      <span className={`h-3 w-3 rounded-full shrink-0 ${colorStyle.dot}`} />
-                      <div className="min-w-0">
-                        <div className="text-sm font-semibold text-[var(--text-primary)] truncate">
-                          {subj?.name}
+                    <div className="flex items-start gap-3.5 min-w-0 flex-1">
+                      <span className={`h-3 w-3 rounded-full shrink-0 mt-1.5 ${colorStyle.dot}`} />
+                      <div className="min-w-0 space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-sm font-semibold text-[var(--text-primary)] truncate">
+                            {subj?.name}
+                          </span>
+                          <SessionMetaBadges
+                            type={slot.type}
+                            mode={slot.mode}
+                            section={slot.section}
+                            group={slot.group}
+                            platform={slot.platform}
+                            compact
+                          />
                         </div>
                         <div className="text-xs text-[var(--text-secondary)] truncate">
-                          {slot.room} · {slot.teacher}
+                          {[slot.room, slot.teacher].filter(Boolean).join(' · ') ||
+                            (isRemote ? t('classMode.online') : '')}
                         </div>
                       </div>
                     </div>
-                    <div
-                      dir="ltr"
-                      className="text-xs font-semibold font-mono-tabular text-[var(--text-primary)] whitespace-nowrap shrink-0"
-                    >
-                      {formatRange(slot.startTime, slot.endTime)}
+
+                    <div className="flex items-center gap-2.5 shrink-0">
+                      {isRemote && slot.meetingUrl && (
+                        <a
+                          href={slot.meetingUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 rounded-lg bg-sky-600 hover:bg-sky-500 text-white px-2.5 py-1 text-[11px] font-bold transition whitespace-nowrap"
+                        >
+                          <ExternalLink className="h-3 w-3" />
+                          <span>{t('classMode.joinCall')}</span>
+                        </a>
+                      )}
+                      <div
+                        dir="ltr"
+                        className="text-xs font-semibold font-mono-tabular text-[var(--text-primary)] whitespace-nowrap"
+                      >
+                        {formatRange(slot.startTime, slot.endTime)}
+                      </div>
                     </div>
                   </div>
                 );

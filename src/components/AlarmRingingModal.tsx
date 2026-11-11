@@ -1,19 +1,38 @@
-import React, { useEffect } from 'react';
-import { BellRing, CheckCircle2, Clock, Volume2, X } from 'lucide-react';
+import React, { useEffect, useMemo } from 'react';
+import { BellRing, CheckCircle2, Clock, ExternalLink, Volume2, X } from 'lucide-react';
 import { useWaqtiStore } from '../store/useWaqtiStore';
 import { useTranslation } from '../hooks/useTranslation';
 import { Logo } from './WaqtiLogo';
 import { soundEngine } from '../lib/sound';
+import { extractUrl } from '../lib/timetableParser';
 
 export const AlarmRingingModal: React.FC = () => {
   const { t, formatTime, digits } = useTranslation();
   const activeRingingAlarm = useWaqtiStore((s) => s.activeRingingAlarm);
   const missedAlarms = useWaqtiStore((s) => s.missedAlarms);
   const settings = useWaqtiStore((s) => s.settings);
+  const timetable = useWaqtiStore((s) => s.timetable);
   const dismissRingingAlarm = useWaqtiStore((s) => s.dismissRingingAlarm);
   const snoozeRingingAlarm = useWaqtiStore((s) => s.snoozeRingingAlarm);
   const completeRingingAlarmLinkedItem = useWaqtiStore((s) => s.completeRingingAlarmLinkedItem);
   const dismissMissedAlarms = useWaqtiStore((s) => s.dismissMissedAlarms);
+
+  const ringingMeetingUrl = useMemo(() => {
+    if (!activeRingingAlarm) return undefined;
+    if (activeRingingAlarm.meetingUrl) return activeRingingAlarm.meetingUrl;
+    if (
+      activeRingingAlarm.linkedType === 'class' &&
+      activeRingingAlarm.linkedId
+    ) {
+      const slot = timetable.find((s) => s.id === activeRingingAlarm.linkedId);
+      if (slot?.meetingUrl) return slot.meetingUrl;
+    }
+    if (activeRingingAlarm.note) {
+      const { url } = extractUrl(activeRingingAlarm.note);
+      if (url) return url;
+    }
+    return undefined;
+  }, [activeRingingAlarm, timetable]);
 
   // Trigger procedural Web Audio alarm loop + browser Notification when activeRingingAlarm fires
   useEffect(() => {
@@ -131,8 +150,21 @@ export const AlarmRingingModal: React.FC = () => {
               </div>
             </div>
 
-            {/* Primary Actions: Mark Linked Item Done + Dismiss */}
+            {/* Primary Actions: Join Online (if remote class), Mark Linked Item Done + Dismiss */}
             <div className="flex flex-col sm:flex-row gap-2.5 pt-2">
+              {ringingMeetingUrl && (
+                <a
+                  href={ringingMeetingUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={dismissRingingAlarm}
+                  className="flex-1 flex items-center justify-center gap-2 rounded-2xl bg-sky-600 hover:bg-sky-500 text-white py-3.5 px-4 text-xs font-bold shadow-md transition"
+                >
+                  <ExternalLink className="h-4 w-4" />
+                  <span>{t('classMode.joinCall')}</span>
+                </a>
+              )}
+
               {(activeRingingAlarm.linkedType === 'habit' ||
                 activeRingingAlarm.linkedType === 'task') &&
                 activeRingingAlarm.linkedId && (

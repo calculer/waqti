@@ -19,6 +19,11 @@ export type SubjectColorId =
   | 'sage'
   | 'olive';
 
+export type SessionType = 'lecture' | 'td' | 'tp' | 'other';
+export type DeliveryMode = 'in_person' | 'remote' | 'hybrid';
+export type MeetingPlatform = 'zoom' | 'meet' | 'teams' | 'moodle' | 'other';
+export type WeekParity = 'all' | 'odd' | 'even';
+
 export interface Subject {
   id: string;
   name: string;
@@ -30,6 +35,9 @@ export interface Subject {
   weeklyGoalHours: number;
   archived: boolean;
   createdAt: string; // ISO string
+  defaultMode?: DeliveryMode;
+  modeByType?: Partial<Record<SessionType, DeliveryMode>>;
+  defaultMeetingUrl?: string;
 }
 
 export type RecurrenceType = 'weekly' | 'biweekly' | 'custom';
@@ -40,14 +48,32 @@ export interface TimetableSlot {
   dayOfWeek: WeekDay;
   startTime: string; // "HH:mm"
   endTime: string; // "HH:mm"
+  type?: SessionType;
+  section?: string;
+  group?: string;
   room: string;
   teacher: string;
+  mode?: DeliveryMode;
+  meetingUrl?: string;
+  platform?: MeetingPlatform;
   recurrence: RecurrenceType;
+  weekParity?: WeekParity;
+  semesterStart?: string; // "YYYY-MM-DD"
+  semesterEnd?: string; // "YYYY-MM-DD"
+  reminderLeadMinutes?: number; // Travel time (in-person) or Join lead time (remote)
   customColor?: SubjectColorId;
   notes?: string;
   excludedDates?: string[]; // "YYYY-MM-DD"
   specificDate?: string; // "YYYY-MM-DD" when edited as a single occurrence
   attendanceByDate?: Record<string, 'attended' | 'absent'>;
+}
+
+export interface AttendanceRecord {
+  id: string;
+  slotId: string;
+  subjectId: string;
+  date: string; // "YYYY-MM-DD"
+  status: 'attended' | 'absent' | 'cancelled';
 }
 
 export type ExamType =
@@ -69,6 +95,10 @@ export interface Exam {
   startTime: string; // "HH:mm"
   durationMinutes: number;
   room: string;
+  mode?: DeliveryMode;
+  meetingUrl?: string;
+  platform?: MeetingPlatform;
+  sessionType?: SessionType;
   coefficient: number;
   topics: string[];
   priority: PriorityLevel;
@@ -159,6 +189,10 @@ export interface AlarmReminder {
   daysOfWeek: WeekDay[]; // used when recurrence === 'weekdays'
   linkedType: AlarmLinkedType;
   linkedId?: string;
+  mode?: DeliveryMode;
+  meetingUrl?: string;
+  platform?: MeetingPlatform;
+  sessionType?: SessionType;
   sound: AlarmTone;
   vibrate: boolean;
   snoozeMinutes: number; // default 5, 10, or 15
@@ -249,6 +283,10 @@ export interface UserSettings {
   pomodoroFocusMinutes: number;
   pomodoroShortBreakMinutes: number;
   pomodoroLongBreakMinutes: number;
+  defaultClassDurationMinutes: number;
+  defaultTravelLeadMinutes: number;
+  defaultJoinLeadMinutes: number;
+  customGeminiApiKey?: string;
   notificationsEnabled: boolean;
   defaultAlarmSound: AlarmTone;
   defaultSnoozeMinutes: number;

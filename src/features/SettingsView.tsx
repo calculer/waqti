@@ -295,6 +295,72 @@ export const SettingsView: React.FC = () => {
         </div>
       </div>
 
+      {/* Class Duration & Smart Reminder Lead Time Defaults */}
+      <div className="rounded-3xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6 space-y-4">
+        <h2 className="text-sm font-bold font-display text-[var(--text-primary)]">
+          {t('settings.classDefaultsTitle')}
+        </h2>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div>
+            <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">
+              {t('settings.defaultClassDuration')}
+            </label>
+            <input
+              type="number"
+              min={30}
+              max={240}
+              step={15}
+              value={settings.defaultClassDurationMinutes ?? 90}
+              onChange={(e) =>
+                updateSettings({
+                  defaultClassDurationMinutes: Math.max(30, Number(e.target.value)),
+                })
+              }
+              className="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3.5 py-2 text-sm font-mono-tabular text-[var(--text-primary)]"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">
+              {t('settings.defaultTravelLead')}
+            </label>
+            <input
+              type="number"
+              min={5}
+              max={120}
+              step={5}
+              value={settings.defaultTravelLeadMinutes ?? 30}
+              onChange={(e) =>
+                updateSettings({
+                  defaultTravelLeadMinutes: Math.max(5, Number(e.target.value)),
+                })
+              }
+              className="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3.5 py-2 text-sm font-mono-tabular text-[var(--text-primary)]"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">
+              {t('settings.defaultJoinLead')}
+            </label>
+            <input
+              type="number"
+              min={1}
+              max={60}
+              step={1}
+              value={settings.defaultJoinLeadMinutes ?? 10}
+              onChange={(e) =>
+                updateSettings({
+                  defaultJoinLeadMinutes: Math.max(1, Number(e.target.value)),
+                })
+              }
+              className="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3.5 py-2 text-sm font-mono-tabular text-[var(--text-primary)]"
+            />
+          </div>
+        </div>
+      </div>
+
       {/* Alarm Defaults, Quiet Hours & Gamification */}
       <div className="rounded-3xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6 space-y-5">
         <h2 className="text-sm font-bold font-display text-[var(--text-primary)]">

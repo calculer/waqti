@@ -4,6 +4,7 @@ import {
   BookOpen,
   Calendar,
   CheckSquare,
+  ClipboardPaste,
   Clock,
   Flame,
   GraduationCap,
@@ -32,6 +33,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   const { t } = useTranslation();
   const [query, setQuery] = useState('');
   const setActiveNav = useWaqtiStore((s) => s.setActiveNav);
+  const openSmartPaste = useWaqtiStore((s) => s.openSmartPaste);
   const subjects = useWaqtiStore((s) => s.subjects);
   const exams = useWaqtiStore((s) => s.exams);
   const tasks = useWaqtiStore((s) => s.tasks);
@@ -65,6 +67,26 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       subtitle: string;
       action: () => void;
     }[] = [];
+
+    const pasteLabel = t('smartPaste.button');
+    if (
+      !q ||
+      pasteLabel.toLowerCase().includes(q) ||
+      'paste'.includes(q) ||
+      'coller'.includes(q) ||
+      'لصق'.includes(q) ||
+      'import'.includes(q)
+    ) {
+      list.push({
+        id: 'cmd-smart-paste',
+        title: pasteLabel,
+        subtitle: t('smartPaste.title'),
+        action: () => {
+          onClose();
+          openSmartPaste();
+        },
+      });
+    }
 
     for (const item of navItems) {
       if (!q || item.label.toLowerCase().includes(q)) {
@@ -137,7 +159,18 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     }
 
     return list.slice(0, 12);
-  }, [query, navItems, subjects, exams, tasks, alarms, setActiveNav, onClose, t]);
+  }, [
+    query,
+    navItems,
+    subjects,
+    exams,
+    tasks,
+    alarms,
+    setActiveNav,
+    openSmartPaste,
+    onClose,
+    t,
+  ]);
 
   if (!isOpen) return null;
 
@@ -174,6 +207,17 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2 border-b border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-4 py-2.5">
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              openSmartPaste();
+            }}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent-soft)] border border-[var(--accent-primary)] px-2.5 py-1 text-xs font-semibold text-[var(--accent-strong)] hover:opacity-90 transition whitespace-nowrap"
+          >
+            <ClipboardPaste className="h-3.5 w-3.5" />
+            <span>{t('smartPaste.button')}</span>
+          </button>
           <button
             type="button"
             onClick={() => {

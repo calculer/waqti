@@ -1,14 +1,17 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
+  Bell,
   Calendar as CalendarIcon,
   Check,
   ChevronLeft,
   ChevronRight,
+  ClipboardPaste,
   Clock,
   Copy,
   Download,
   Edit3,
+  ExternalLink,
   LayoutGrid,
   List,
   MapPin,
@@ -20,6 +23,7 @@ import {
   User,
   UserCheck,
   UserX,
+  Video,
   X,
 } from 'lucide-react';
 import { useWaqtiStore } from '../store/useWaqtiStore';
@@ -46,7 +50,20 @@ import {
 } from '../lib/dates';
 import { getSubjectColor } from '../lib/colors';
 import { EmptyHourglassIllustration } from '../components/WaqtiLogo';
-import type { RecurrenceType, TimetableSlot, WeekDay } from '../types';
+import {
+  DeliveryModeSegmentedControl,
+  SessionMetaBadges,
+  SessionTypeSegmentedControl,
+} from '../components/SessionMetaBadges';
+import { detectMeetingPlatform, isValidMeetingUrl } from '../lib/timetableParser';
+import type {
+  DeliveryMode,
+  RecurrenceType,
+  SessionType,
+  TimetableSlot,
+  WeekDay,
+  WeekParity,
+} from '../types';
 
 const PIXELS_PER_HOUR = 68;
 const SHIFT_DELTAS = [-30, -15, -5, 5, 15, 30] as const;
@@ -78,6 +95,11 @@ export const TimetableView: React.FC<{
   const updateTimetableSlot = useWaqtiStore((s) => s.updateTimetableSlot);
   const deleteTimetableSlot = useWaqtiStore((s) => s.deleteTimetableSlot);
   const duplicateDaySlots = useWaqtiStore((s) => s.duplicateDaySlots);
+  const addAlarm = useWaqtiStore((s) => s.addAlarm);
+  const openSmartPaste = useWaqtiStore((s) => s.openSmartPaste);
+  const isSmartPasteOpen = useWaqtiStore((s) => s.isSmartPasteOpen);
+  const recentlyImportedSlotIds = useWaqtiStore((s) => s.recentlyImportedSlotIds);
+  const clearRecentlyImportedSlots = useWaqtiStore((s) => s.clearRecentlyImportedSlots);
 
   // Responsive viewport tracking (<768px defaults to List view on initial load)
   const [viewportWidth, setViewportWidth] = useState<number>(() =>
@@ -90,6 +112,10 @@ export const TimetableView: React.FC<{
   // Active week anchor date & selected day of week
   const [weekAnchorDate, setWeekAnchorDate] = useState<string>(todayStr);
   const [selectedDay, setSelectedDay] = useState<WeekDay>(() => getWeekDayIndex(todayStr));
+
+  // Filter by SessionType and DeliveryMode
+  const [filterType, setFilterType] = useState<'all' | SessionType>('all');
+  const [filterMode, setFilterMode] = useState<'all' | DeliveryMode>('all');
 
   // Configurable Hour Axis Range (Auto-fit vs Custom)
   const [autoFitHours, setAutoFitHours] = useState<boolean>(true);
@@ -107,9 +133,15 @@ export const TimetableView: React.FC<{
   const [dayOfWeek, setDayOfWeek] = useState<WeekDay>(() => getWeekDayIndex(todayStr));
   const [startTime, setStartTime] = useState<string>('09:00');
   const [endTime, setEndTime] = useState<string>('10:30');
+  const [sessionType, setSessionType] = useState<SessionType>('lecture');
+  const [section, setSection] = useState<string>('');
+  const [group, setGroup] = useState<string>('');
   const [room, setRoom] = useState<string>('');
   const [teacher, setTeacher] = useState<string>('');
+  const [mode, setMode] = useState<DeliveryMode>('in_person');
+  const [meetingUrl, setMeetingUrl] = useState<string>('');
   const [recurrence, setRecurrence] = useState<RecurrenceType>('weekly');
+  const [weekParity, setWeekParity] = useState<WeekParity>('all');
   const [errorMsg, setErrorMsg] = useState<string>('');
 
   // Selected class block for Popover (desktop) / Bottom Sheet (mobile)
@@ -139,6 +171,39 @@ export const TimetableView: React.FC<{
       window.clearInterval(timer);
     };
   }, [settings.timezone]);
+
+  // Global paste listener on the Timetable screen (Ctrl/Cmd+V anywhere opens Smart Paste with content analyzed)
+  useEffect(() => {
+    const handleGlobalPaste = (e: ClipboardEvent) => {
+      if (isSmartPasteOpen) return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      const htmlText = e.clipboardData?.getData('text/html') ?? '';
+      const plainText = e.clipboardData?.getData('text/plain') ?? '';
+      if (plainText.trim() || htmlText.trim()) {
+        e.preventDefault();
+        openSmartPaste({ plainText, htmlText });
+      }
+    };
+    window.addEventListener('paste', handleGlobalPaste);
+    return () => window.removeEventListener('paste', handleGlobalPaste);
+  }, [isSmartPasteOpen, openSmartPaste]);
+
+  // Clear recently imported slot highlight after 5 seconds
+  useEffect(() => {
+    if (recentlyImportedSlotIds.length === 0) return;
+    const tId = window.setTimeout(() => {
+      clearRecentlyImportedSlots();
+    }, 5000);
+    return () => window.clearTimeout(tId);
+  }, [recentlyImportedSlotIds, clearRecentlyImportedSlots]);
 
   // Close toolbar overflow menu when clicking outside
   useEffect(() => {
@@ -256,10 +321,19 @@ export const TimetableView: React.FC<{
     });
   }, [orderedDaysFull, orderedDaysShort, weekDates, todayStr, settings.weekendDays]);
 
+  // Filtered timetable based on active SessionType and DeliveryMode filters
+  const filteredTimetable = useMemo(() => {
+    return timetable.filter((sl) => {
+      if (filterType !== 'all' && (sl.type || 'lecture') !== filterType) return false;
+      if (filterMode !== 'all' && (sl.mode || 'in_person') !== filterMode) return false;
+      return true;
+    });
+  }, [timetable, filterType, filterMode]);
+
   // Weekly Summary Metrics (Total Hours, Busiest Day, Free Study Windows)
   const weeklySummary = useMemo(
-    () => computeWeeklyTimetableSummary(timetable, weekDates),
-    [timetable, weekDates]
+    () => computeWeeklyTimetableSummary(filteredTimetable, weekDates),
+    [filteredTimetable, weekDates]
   );
 
   const busiestDayLabel = useMemo(() => {
@@ -270,8 +344,8 @@ export const TimetableView: React.FC<{
 
   // Hour Axis Computation (Auto-fit to user's classes or custom range)
   const { startHour, endHour, hours } = useMemo(
-    () => computeTimetableGridHours(timetable, autoFitHours, customStartHour, customEndHour),
-    [timetable, autoFitHours, customStartHour, customEndHour]
+    () => computeTimetableGridHours(filteredTimetable, autoFitHours, customStartHour, customEndHour),
+    [filteredTimetable, autoFitHours, customStartHour, customEndHour]
   );
 
   const gridTotalHeightPx = (endHour - startHour) * PIXELS_PER_HOUR;
@@ -279,12 +353,12 @@ export const TimetableView: React.FC<{
   // Count total active slots in the viewed week for whole-week empty state
   const totalWeekActiveSlots = useMemo(() => {
     return weekDayColumns.reduce((acc, col) => {
-      const count = timetable.filter((s) =>
+      const count = filteredTimetable.filter((s) =>
         isSlotActiveOnDate(s, col.dateStr, col.dayIndex)
       ).length;
       return acc + count;
     }, 0);
-  }, [weekDayColumns, timetable]);
+  }, [weekDayColumns, filteredTimetable]);
 
   const activeSubjectId = subjectId || subjects[0]?.id || '';
 
@@ -296,18 +370,28 @@ export const TimetableView: React.FC<{
     );
   }, [dayOfWeek, startTime, endTime, editingSlotId, timetable]);
 
-  // Open Add Form pre-filled with a specific day and start time
+  // Open Add Form pre-filled with a specific day, start time, and subject's default delivery mode
   const openAddSlotModal = (targetDay: WeekDay, targetStart: string = '09:00') => {
     setEditingSlotId(null);
     const defaultSubj = subjects[0];
+    const defaultDuration = settings.defaultClassDurationMinutes || 90;
+    const defaultType: SessionType = 'lecture';
+    const resolvedMode: DeliveryMode =
+      defaultSubj?.modeByType?.[defaultType] ?? defaultSubj?.defaultMode ?? 'in_person';
     setSubjectId(defaultSubj?.id ?? '');
     setDayOfWeek(targetDay);
     setStartTime(targetStart);
-    const endMins = Math.min(23 * 60 + 30, timeToMinutes(targetStart) + 90);
+    const endMins = Math.min(23 * 60 + 30, timeToMinutes(targetStart) + defaultDuration);
     setEndTime(minutesToTime(endMins));
-    setRoom(defaultSubj?.room ?? '');
+    setSessionType(defaultType);
+    setSection('');
+    setGroup('');
+    setRoom(resolvedMode === 'remote' ? '' : (defaultSubj?.room ?? ''));
     setTeacher(defaultSubj?.teacher ?? '');
+    setMode(resolvedMode);
+    setMeetingUrl('');
     setRecurrence('weekly');
+    setWeekParity('all');
     setErrorMsg('');
     setIsFormOpen(true);
   };
@@ -319,9 +403,15 @@ export const TimetableView: React.FC<{
     setDayOfWeek(slot.dayOfWeek);
     setStartTime(slot.startTime);
     setEndTime(slot.endTime);
+    setSessionType(slot.type ?? 'lecture');
+    setSection(slot.section ?? '');
+    setGroup(slot.group ?? '');
     setRoom(slot.room);
     setTeacher(slot.teacher);
+    setMode(slot.mode ?? 'in_person');
+    setMeetingUrl(slot.meetingUrl ?? '');
     setRecurrence(slot.recurrence);
+    setWeekParity(slot.weekParity ?? 'all');
     setErrorMsg('');
     setSelectedSlotState(null);
     setIsFormOpen(true);
@@ -334,27 +424,39 @@ export const TimetableView: React.FC<{
       setErrorMsg(t('error.endBeforeStart'));
       return;
     }
+    if ((mode === 'remote' || mode === 'hybrid') && meetingUrl.trim() && !isValidMeetingUrl(meetingUrl)) {
+      setErrorMsg(t('timetable.invalidUrl'));
+      return;
+    }
     const subj = subjects.find((s) => s.id === activeSubjectId);
+    const cleanUrl = meetingUrl.trim();
+    const detectedPlatform = detectMeetingPlatform(cleanUrl);
+    const resolvedRoom =
+      mode === 'remote'
+        ? room.trim()
+        : room.trim() || subj?.room || 'Room 101';
+
+    const payload = {
+      subjectId: activeSubjectId,
+      dayOfWeek,
+      startTime,
+      endTime,
+      type: sessionType,
+      section: section.trim() || undefined,
+      group: group.trim() || undefined,
+      room: resolvedRoom,
+      teacher: teacher.trim() || subj?.teacher || '',
+      mode,
+      meetingUrl: cleanUrl || undefined,
+      platform: detectedPlatform,
+      recurrence,
+      weekParity: weekParity !== 'all' ? weekParity : undefined,
+    };
+
     if (editingSlotId) {
-      updateTimetableSlot(editingSlotId, {
-        subjectId: activeSubjectId,
-        dayOfWeek,
-        startTime,
-        endTime,
-        room: room.trim() || subj?.room || 'Room 101',
-        teacher: teacher.trim() || subj?.teacher || '',
-        recurrence,
-      });
+      updateTimetableSlot(editingSlotId, payload);
     } else {
-      addTimetableSlot({
-        subjectId: activeSubjectId,
-        dayOfWeek,
-        startTime,
-        endTime,
-        room: room.trim() || subj?.room || 'Room 101',
-        teacher: teacher.trim() || subj?.teacher || '',
-        recurrence,
-      });
+      addTimetableSlot(payload);
     }
     setIsFormOpen(false);
     setEditingSlotId(null);
@@ -692,15 +794,69 @@ export const TimetableView: React.FC<{
             )}
           </div>
 
+          {/* Prominent Smart Paste Timetable Button */}
+          <button
+            type="button"
+            data-testid="paste-timetable-btn"
+            onClick={() => openSmartPaste(null)}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--accent-primary)]/45 bg-[var(--accent-soft)] px-3.5 py-2.5 text-xs font-bold text-[var(--accent-strong)] hover:bg-[var(--accent-primary)] hover:text-[var(--accent-ink)] shadow-2xs transition whitespace-nowrap cursor-pointer"
+          >
+            <ClipboardPaste className="h-4 w-4 shrink-0" />
+            <span>{t('timetable.pasteTimetable')}</span>
+          </button>
+
           {/* Primary Add Class CTA */}
           <button
             type="button"
             onClick={() => openAddSlotModal(selectedDay, '09:00')}
-            className="inline-flex items-center gap-1.5 rounded-xl btn-primary-waqti px-4 py-2.5 text-xs font-semibold shadow-sm transition whitespace-nowrap"
+            className="inline-flex items-center gap-1.5 rounded-xl btn-primary-waqti px-4 py-2.5 text-xs font-semibold shadow-sm transition whitespace-nowrap cursor-pointer"
           >
             <Plus className="h-4 w-4 shrink-0" />
             <span>{t('timetable.addSlot')}</span>
           </button>
+        </div>
+      </div>
+
+      {/* ═══════════ 1B. SESSION TYPE & DELIVERY MODE FILTER BAR ═══════════ */}
+      <div className="flex flex-wrap items-center justify-between gap-2 no-print">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {(['all', 'lecture', 'td', 'tp', 'other'] as const).map((tp) => {
+            const active = filterType === tp;
+            return (
+              <button
+                key={tp}
+                type="button"
+                onClick={() => setFilterType(tp)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer whitespace-nowrap ${
+                  active
+                    ? 'btn-primary-waqti shadow-2xs'
+                    : 'bg-[var(--bg-surface)] border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                }`}
+              >
+                {tp === 'all' ? t('timetable.filterAllTypes') : t(`timetable.type.${tp}`)}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-1.5">
+          {(['all', 'in_person', 'remote', 'hybrid'] as const).map((md) => {
+            const active = filterMode === md;
+            return (
+              <button
+                key={md}
+                type="button"
+                onClick={() => setFilterMode(md)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer whitespace-nowrap ${
+                  active
+                    ? 'btn-primary-waqti shadow-2xs'
+                    : 'bg-[var(--bg-surface)] border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                }`}
+              >
+                {md === 'all' ? t('timetable.filterAllModes') : t(`timetable.mode.${md}`)}
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -821,7 +977,10 @@ export const TimetableView: React.FC<{
                   setSubjectId(nextId);
                   const subj = subjects.find((s) => s.id === nextId);
                   if (subj && !editingSlotId) {
-                    setRoom(subj.room);
+                    const nextMode =
+                      subj.modeByType?.[sessionType] ?? subj.defaultMode ?? 'in_person';
+                    setMode(nextMode);
+                    setRoom(nextMode === 'remote' ? '' : subj.room);
                     setTeacher(subj.teacher);
                   }
                 }}
@@ -879,17 +1038,75 @@ export const TimetableView: React.FC<{
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {/* Session Type & Delivery Mode Segmented Controls */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
-                {t('subjects.room')}
+                {t('timetable.sessionType')}
+              </label>
+              <SessionTypeSegmentedControl
+                lang={lang}
+                value={sessionType}
+                onChange={(nextType) => {
+                  setSessionType(nextType);
+                  const subj = subjects.find((s) => s.id === activeSubjectId);
+                  if (subj && !editingSlotId) {
+                    const nextMode =
+                      subj.modeByType?.[nextType] ?? subj.defaultMode ?? mode;
+                    setMode(nextMode);
+                  }
+                }}
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
+                {t('timetable.mode')}
+              </label>
+              <DeliveryModeSegmentedControl
+                lang={lang}
+                value={mode}
+                onChange={setMode}
+              />
+            </div>
+          </div>
+
+          {/* Section, Group, Room, Teacher, Recurrence, Week Parity */}
+          <div className="grid grid-cols-2 sm:grid-cols-6 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
+                {t('timetable.section')}
+              </label>
+              <input
+                type="text"
+                value={section}
+                onChange={(e) => setSection(e.target.value)}
+                placeholder="1"
+                className="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-2 text-sm text-[var(--text-primary)]"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
+                {t('timetable.group')}
+              </label>
+              <input
+                type="text"
+                value={group}
+                onChange={(e) => setGroup(e.target.value)}
+                placeholder="3"
+                className="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-2 text-sm text-[var(--text-primary)]"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
+                {t('subjects.room')}{' '}
+                {mode === 'remote' ? `(${t('common.cancel')})` : ''}
               </label>
               <input
                 type="text"
                 value={room}
                 onChange={(e) => setRoom(e.target.value)}
-                placeholder="Amphi B2"
-                className="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3.5 py-2.5 text-sm text-[var(--text-primary)]"
+                placeholder={mode === 'remote' ? 'Online' : 'Amphi B2'}
+                className="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-2 text-sm text-[var(--text-primary)]"
               />
             </div>
             <div>
@@ -900,7 +1117,7 @@ export const TimetableView: React.FC<{
                 type="text"
                 value={teacher}
                 onChange={(e) => setTeacher(e.target.value)}
-                className="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3.5 py-2.5 text-sm text-[var(--text-primary)]"
+                className="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-2 text-sm text-[var(--text-primary)]"
               />
             </div>
             <div>
@@ -910,14 +1127,45 @@ export const TimetableView: React.FC<{
               <select
                 value={recurrence}
                 onChange={(e) => setRecurrence(e.target.value as RecurrenceType)}
-                className="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-2.5 text-sm text-[var(--text-primary)]"
+                className="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-2 text-sm text-[var(--text-primary)]"
               >
                 <option value="weekly">{t('timetable.recurrence.weekly')}</option>
                 <option value="biweekly">{t('timetable.recurrence.biweekly')}</option>
                 <option value="custom">{t('timetable.recurrence.custom')}</option>
               </select>
             </div>
+            <div>
+              <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
+                {t('timetable.weekParity')}
+              </label>
+              <select
+                value={weekParity}
+                onChange={(e) => setWeekParity(e.target.value as WeekParity)}
+                className="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-2 text-sm text-[var(--text-primary)]"
+              >
+                <option value="all">{t('timetable.parity.all')}</option>
+                <option value="odd">{t('timetable.parity.odd')}</option>
+                <option value="even">{t('timetable.parity.even')}</option>
+              </select>
+            </div>
           </div>
+
+          {/* Meeting Link field when Remote or Hybrid is selected */}
+          {(mode === 'remote' || mode === 'hybrid') && (
+            <div>
+              <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
+                {t('timetable.meetingUrl')}
+              </label>
+              <input
+                type="url"
+                dir="ltr"
+                value={meetingUrl}
+                onChange={(e) => setMeetingUrl(e.target.value)}
+                placeholder="https://meet.google.com/... or https://zoom.us/j/..."
+                className="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3.5 py-2.5 text-sm text-[var(--text-primary)]"
+              />
+            </div>
+          )}
 
           {formConflicts.length > 0 && (
             <div className="flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 text-xs text-amber-700 dark:text-amber-300">
@@ -1022,14 +1270,24 @@ export const TimetableView: React.FC<{
               {t('timetable.emptyWeekSubtitle')}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => openAddSlotModal(selectedDay, '09:00')}
-            className="mt-1 inline-flex items-center gap-1.5 rounded-xl btn-primary-waqti px-4 py-2 text-xs font-semibold shadow-xs"
-          >
-            <Plus className="h-4 w-4" />
-            <span>{t('timetable.addSlot')}</span>
-          </button>
+          <div className="mt-1 flex flex-wrap items-center justify-center gap-2">
+            <button
+              type="button"
+              onClick={() => openSmartPaste(null)}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--accent-primary)]/45 bg-[var(--accent-soft)] px-4 py-2 text-xs font-bold text-[var(--accent-strong)] shadow-xs cursor-pointer"
+            >
+              <ClipboardPaste className="h-4 w-4" />
+              <span>{t('timetable.pasteTimetable')}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => openAddSlotModal(selectedDay, '09:00')}
+              className="inline-flex items-center gap-1.5 rounded-xl btn-primary-waqti px-4 py-2 text-xs font-semibold shadow-xs cursor-pointer"
+            >
+              <Plus className="h-4 w-4" />
+              <span>{t('timetable.addSlot')}</span>
+            </button>
+          </div>
         </div>
       )}
 
@@ -1167,7 +1425,7 @@ export const TimetableView: React.FC<{
 
                   {/* Individual Day Columns */}
                   {gridColumnsToRender.map((col) => {
-                    const rawDaySlots = timetable.filter((s) =>
+                    const rawDaySlots = filteredTimetable.filter((s) =>
                       isSlotActiveOnDate(s, col.dateStr, col.dayIndex)
                     );
                     const packedSlots = packOverlappingEvents(rawDaySlots);
@@ -1246,6 +1504,7 @@ export const TimetableView: React.FC<{
                           const isSelectedBlock =
                             selectedSlotState?.slotId === slot.id &&
                             selectedSlotState?.dateStr === col.dateStr;
+                          const isRecentlyImported = recentlyImportedSlotIds.includes(slot.id);
 
                           const fullRangeStr = formatRange(displayStart, displayEnd);
                           const compactStartStr = formatTime(displayStart);
@@ -1298,7 +1557,6 @@ export const TimetableView: React.FC<{
                               onPointerDown={(e) => {
                                 if (e.button !== 0) return;
                                 e.stopPropagation();
-                                // Long-press support on touch devices
                                 if (e.pointerType === 'touch') {
                                   if (longPressTimerRef.current) {
                                     window.clearTimeout(longPressTimerRef.current);
@@ -1335,6 +1593,8 @@ export const TimetableView: React.FC<{
                                 isSelectedBlock
                                   ? 'border-[var(--accent-primary)] ring-2 ring-[var(--accent-primary)]/40 shadow-md z-30'
                                   : colorStyle.border
+                              } ${
+                                isRecentlyImported ? 'waqti-slot-highlight' : ''
                               } ps-2.5 pe-1.5 py-1.5 flex flex-col justify-between text-start cursor-pointer select-none transition-shadow hover:shadow-md overflow-hidden min-w-0`}
                             >
                               {/* Inline-Start Subject Color Bar */}
@@ -1353,10 +1613,9 @@ export const TimetableView: React.FC<{
                                 </div>
                               )}
 
-                              {/* Top Section: One-Line Time Range + Hover "⋯" Button + Conflict/Attendance Badges */}
+                              {/* Top Section: One-Line Time Range + Conflict/Attendance */}
                               <div className="min-w-0 overflow-hidden">
                                 <div className="flex items-center justify-between gap-1 min-w-0">
-                                  {/* Time Range on ONE Line (Full range when >=116px, start time only when <116px) */}
                                   <div
                                     dir="ltr"
                                     data-testid="timetable-block-time"
@@ -1427,12 +1686,30 @@ export const TimetableView: React.FC<{
                                 >
                                   {subj?.name}
                                 </div>
+
+                                {/* Compact Type + Mode + Group Badge Row */}
+                                {durationMinutes >= 45 && (
+                                  <div className="mt-1 min-w-0 overflow-hidden">
+                                    <SessionMetaBadges
+                                      lang={lang}
+                                      type={slot.type}
+                                      mode={slot.mode}
+                                      section={slot.section}
+                                      group={slot.group}
+                                      compactForGrid
+                                    />
+                                  </div>
+                                )}
                               </div>
 
                               {/* Bottom Metadata: Room & Teacher (Shown ONLY when container >= 126px and height allows) */}
-                              {durationMinutes >= 55 && (
+                              {durationMinutes >= 65 && (
                                 <div className="waqti-slot-meta items-center gap-1 text-[10px] text-[var(--text-muted)] min-w-0 overflow-hidden pt-0.5">
-                                  <span className="truncate min-w-0">{slot.room}</span>
+                                  <span className="truncate min-w-0">
+                                    {slot.mode === 'remote'
+                                      ? t('timetable.mode.remote')
+                                      : slot.room}
+                                  </span>
                                   {slot.teacher && durationMinutes >= 75 && (
                                     <>
                                       <span aria-hidden="true" className="shrink-0">
@@ -1493,7 +1770,7 @@ export const TimetableView: React.FC<{
           {(() => {
             const activeCol =
               weekDayColumns.find((c) => c.dayIndex === selectedDay) ?? weekDayColumns[0];
-            const daySlots = timetable
+            const daySlots = filteredTimetable
               .filter((s) =>
                 isSlotActiveOnDate(s, activeCol.dateStr, activeCol.dayIndex)
               )
@@ -1521,7 +1798,7 @@ export const TimetableView: React.FC<{
             return daySlots.map((slot) => {
               const subj = subjects.find((s) => s.id === slot.subjectId);
               const colorStyle = getSubjectColor(slot.customColor ?? subj?.color);
-              const conflicts = detectSlotOverlaps(slot, rawSlotsForDay(timetable, activeCol.dateStr, activeCol.dayIndex));
+              const conflicts = detectSlotOverlaps(slot, rawSlotsForDay(filteredTimetable, activeCol.dateStr, activeCol.dayIndex));
               const attendanceStatus = slot.attendanceByDate?.[activeCol.dateStr];
 
               return (
@@ -1541,7 +1818,7 @@ export const TimetableView: React.FC<{
                     className={`absolute inset-y-0 start-0 w-1.5 ${colorStyle.dot}`}
                   />
 
-                  <div className="min-w-0 flex-1 space-y-1">
+                  <div className="min-w-0 flex-1 space-y-1.5">
                     <div className="flex flex-wrap items-center gap-2">
                       <span
                         dir="ltr"
@@ -1549,6 +1826,16 @@ export const TimetableView: React.FC<{
                       >
                         {formatRange(slot.startTime, slot.endTime)}
                       </span>
+                      <SessionMetaBadges
+                        lang={lang}
+                        type={slot.type}
+                        mode={slot.mode}
+                        section={slot.section}
+                        group={slot.group}
+                        meetingUrl={slot.meetingUrl}
+                        platform={slot.platform}
+                        showJoinButton
+                      />
                       {conflicts.length > 0 && (
                         <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300">
                           <AlertTriangle className="h-3 w-3" />
@@ -1642,6 +1929,11 @@ export const TimetableView: React.FC<{
                 'EEE d MMM',
                 digitsStyle
               );
+              const isRemoteOrHybrid =
+                activePopoverSlot.mode === 'remote' || activePopoverSlot.mode === 'hybrid';
+              const leadMins = isRemoteOrHybrid
+                ? settings.defaultJoinLeadMinutes || 10
+                : settings.defaultTravelLeadMinutes || 30;
 
               return (
                 <>
@@ -1651,11 +1943,11 @@ export const TimetableView: React.FC<{
                       <span
                         className={`mt-1 h-3.5 w-3.5 rounded-full shrink-0 ${colorStyle.dot}`}
                       />
-                      <div className="min-w-0">
+                      <div className="min-w-0 space-y-1.5">
                         <h3 className="text-base font-bold text-[var(--text-primary)] [overflow-wrap:anywhere]">
                           {subj?.name}
                         </h3>
-                        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-[var(--text-secondary)]">
+                        <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--text-secondary)]">
                           <span
                             dir="ltr"
                             className="font-mono-tabular font-bold text-[var(--accent-strong)] whitespace-nowrap"
@@ -1668,8 +1960,17 @@ export const TimetableView: React.FC<{
                           <span aria-hidden="true">·</span>
                           <span>{formattedDateLabel}</span>
                         </div>
+                        <SessionMetaBadges
+                          lang={lang}
+                          type={activePopoverSlot.type}
+                          mode={activePopoverSlot.mode}
+                          section={activePopoverSlot.section}
+                          group={activePopoverSlot.group}
+                          meetingUrl={activePopoverSlot.meetingUrl}
+                          platform={activePopoverSlot.platform}
+                        />
                         {(activePopoverSlot.room || activePopoverSlot.teacher) && (
-                          <p className="mt-1 text-xs text-[var(--text-muted)]">
+                          <p className="text-xs text-[var(--text-muted)]">
                             {[activePopoverSlot.room, activePopoverSlot.teacher]
                               .filter(Boolean)
                               .join(' · ')}
@@ -1685,6 +1986,60 @@ export const TimetableView: React.FC<{
                       className="rounded-xl p-1.5 text-[var(--text-muted)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)] shrink-0"
                     >
                       <X className="h-4 w-4" />
+                    </button>
+                  </div>
+
+                  {/* One-tap Join Online Button + Smart Leave/Join Reminder */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    {isRemoteOrHybrid && activePopoverSlot.meetingUrl && (
+                      <a
+                        href={activePopoverSlot.meetingUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl bg-sky-500 hover:bg-sky-600 text-white px-3.5 py-2.5 text-xs font-bold shadow-xs transition whitespace-nowrap"
+                      >
+                        <Video className="h-4 w-4 shrink-0" />
+                        <span>{t('timetable.joinClass')}</span>
+                        <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                      </a>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        addAlarm({
+                          title: `${subj?.name ?? 'Class'} — ${
+                            isRemoteOrHybrid
+                              ? t('timetable.joinClass')
+                              : activePopoverSlot.room || ''
+                          }`,
+                          note: isRemoteOrHybrid
+                            ? activePopoverSlot.meetingUrl || ''
+                            : activePopoverSlot.room || '',
+                          date: selectedSlotState.dateStr,
+                          time: activePopoverSlot.startTime,
+                          recurrence: 'weekly',
+                          daysOfWeek: [activePopoverSlot.dayOfWeek],
+                          linkedType: 'class',
+                          linkedId: activePopoverSlot.id,
+                          sound: settings.defaultAlarmSound,
+                          vibrate: settings.alarmVibration,
+                          snoozeMinutes: settings.defaultSnoozeMinutes,
+                          leadMinutes: leadMins,
+                          enabled: true,
+                        });
+                        onPushUndo('timetable.reminderCreated', () => {});
+                      }}
+                      className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:border-[var(--accent-primary)] px-3 py-2.5 text-xs font-semibold text-[var(--text-primary)] transition whitespace-nowrap cursor-pointer"
+                    >
+                      <Bell className="h-3.5 w-3.5 text-[var(--accent-strong)] shrink-0" />
+                      <span>
+                        {t(
+                          isRemoteOrHybrid
+                            ? 'timetable.joinReminder'
+                            : 'timetable.leaveReminder',
+                          { minutes: leadMins }
+                        )}
+                      </span>
                     </button>
                   </div>
 

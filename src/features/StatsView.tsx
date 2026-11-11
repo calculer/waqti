@@ -13,12 +13,19 @@ import {
 import { Award, CalendarCheck, Shield, Sparkles } from 'lucide-react';
 import { useWaqtiStore } from '../store/useWaqtiStore';
 import { useTranslation } from '../hooks/useTranslation';
-import { formatLocalizedDate, shiftDateString } from '../lib/dates';
+import {
+  computeStatsByTypeAndMode,
+  formatLocalizedDate,
+  shiftDateString,
+} from '../lib/dates';
 import { getSubjectColor } from '../lib/colors';
+import { SessionMetaBadges } from '../components/SessionMetaBadges';
+import type { AttendanceRecord, DeliveryMode, SessionType } from '../types';
 
 export const StatsView: React.FC = () => {
   const { t, lang, digitsStyle, digits } = useTranslation();
   const subjects = useWaqtiStore((s) => s.subjects);
+  const timetable = useWaqtiStore((s) => s.timetable);
   const focusSessions = useWaqtiStore((s) => s.focusSessions);
   const tasks = useWaqtiStore((s) => s.tasks);
   const habits = useWaqtiStore((s) => s.habits);
@@ -79,6 +86,29 @@ export const StatsView: React.FC = () => {
     return Math.min(100, Math.round((checks / (habits.length * 7)) * 100));
   }, [habits, todayStr]);
 
+  // Convert timetable attendanceByDate maps into AttendanceRecord[] and compute breakdown by type & mode
+  const typeAndModeStats = useMemo(() => {
+    const records: AttendanceRecord[] = [];
+    for (const sl of timetable) {
+      if (sl.attendanceByDate) {
+        for (const [dateStr, st] of Object.entries(sl.attendanceByDate)) {
+          records.push({
+            id: `${sl.id}-${dateStr}`,
+            slotId: sl.id,
+            subjectId: sl.subjectId,
+            date: dateStr,
+            status: st === 'attended' ? 'attended' : 'absent',
+          });
+        }
+      }
+    }
+    return computeStatsByTypeAndMode(timetable, records);
+  }, [timetable]);
+
+  const totalWeeklyScheduledHours = useMemo(() => {
+    return Object.values(typeAndModeStats.hoursByType).reduce((a, b) => a + b, 0);
+  }, [typeAndModeStats]);
+
   const narrativeSummary = useMemo(() => {
     const hrs = (totalFocusMinutes / 60).toFixed(1);
     const topSubj =
@@ -111,10 +141,10 @@ export const StatsView: React.FC = () => {
               </div>
               <div>
                 <div className="text-xs font-bold uppercase tracking-wider text-[var(--accent-primary)]">
-                  {t('stats.level')} {digits(level)}
+                  {t('stats.level', { level: digits(level) })}
                 </div>
                 <div className="text-lg font-bold font-display tabular-nums text-[var(--text-primary)]">
-                  {digits(xp)} {t('stats.xpPoints')}
+                  {t('stats.xp', { xp: digits(xp) })}
                 </div>
               </div>
             </div>
@@ -181,6 +211,117 @@ export const StatsView: React.FC = () => {
             className="mt-2 text-2xl font-bold font-display tabular-nums text-[var(--accent-primary)]"
           >
             {t('stats.bestHoursValue')}
+          </div>
+        </div>
+      </div>
+
+      {/* NEW: Weekly Class Hours & Attendance Split by Session Type and Delivery Mode */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Weekly Hours by Session Type + Attendance Rate per Type */}
+        <div className="rounded-3xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6 space-y-4">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-sm font-bold text-[var(--text-primary)]">
+              {t('stats.hoursByTypeTitle')}
+            </h3>
+            <span className="text-xs text-[var(--text-muted)] shrink-0">
+              {t('stats.attendanceByType')}
+            </span>
+          </div>
+
+          <div className="space-y-3">
+            {(['lecture', 'td', 'tp', 'other'] as SessionType[]).map((st) => {
+              const hrs = typeAndModeStats.hoursByType[st];
+              const pct =
+                totalWeeklyScheduledHours > 0
+                  ? Math.round((hrs / totalWeeklyScheduledHours) * 100)
+                  : 0;
+              const attRate = typeAndModeStats.attendanceByType[st].rate ?? 100;
+
+              return (
+                <div key={st} className="space-y-1.5">
+                  <div className="flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-2">
+                      <SessionMetaBadges type={st} compact />
+                      <span
+                        dir="ltr"
+                        className="font-mono-tabular font-semibold text-[var(--text-primary)]"
+                      >
+                        {digits(hrs)}h
+                      </span>
+                    </div>
+                    <span
+                      dir="ltr"
+                      className="font-mono-tabular text-[11px] font-bold text-emerald-600 dark:text-emerald-400"
+                    >
+                      {digits(attRate)}%
+                    </span>
+                  </div>
+                  <div className="h-2 w-full rounded-full bg-[var(--bg-elevated)] overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-[var(--accent-primary)] transition-all duration-300"
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Weekly Hours by Delivery Mode + Attendance Rate per Mode */}
+        <div className="rounded-3xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6 space-y-4">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-sm font-bold text-[var(--text-primary)]">
+              {t('stats.hoursByModeTitle')}
+            </h3>
+            <span className="text-xs text-[var(--text-muted)] shrink-0">
+              {t('stats.attendanceByType')}
+            </span>
+          </div>
+
+          <div className="space-y-3">
+            {(['in_person', 'remote', 'hybrid'] as DeliveryMode[]).map((md) => {
+              const hrs = typeAndModeStats.hoursByMode[md];
+              const pct =
+                totalWeeklyScheduledHours > 0
+                  ? Math.round((hrs / totalWeeklyScheduledHours) * 100)
+                  : 0;
+              const attRate = typeAndModeStats.attendanceByMode[md].rate ?? 100;
+
+              return (
+                <div key={md} className="space-y-1.5">
+                  <div className="flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-2">
+                      <SessionMetaBadges mode={md} showModeLabel compact />
+                      <span
+                        dir="ltr"
+                        className="font-mono-tabular font-semibold text-[var(--text-primary)]"
+                      >
+                        {digits(hrs)}h
+                      </span>
+                    </div>
+                    <span
+                      dir="ltr"
+                      className="font-mono-tabular text-[11px] font-bold text-emerald-600 dark:text-emerald-400"
+                    >
+                      {digits(attRate)}%
+                    </span>
+                  </div>
+                  <div className="h-2 w-full rounded-full bg-[var(--bg-elevated)] overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-300 ${
+                        md === 'remote'
+                          ? 'bg-sky-500'
+                          : md === 'hybrid'
+                            ? 'bg-purple-500'
+                            : 'bg-emerald-500'
+                      }`}
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>

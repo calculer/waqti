@@ -2,16 +2,14 @@ import React, { useMemo, useState } from 'react';
 import {
   BellRing,
   BookOpen,
-  Calendar as CalendarIcon,
   CheckSquare,
   ChevronLeft,
   ChevronRight,
-  Clock,
+  ExternalLink,
   Flame,
   GraduationCap,
   Layers,
   Plus,
-  Sparkles,
 } from 'lucide-react';
 import { useWaqtiStore } from '../store/useWaqtiStore';
 import { useTranslation } from '../hooks/useTranslation';
@@ -25,6 +23,7 @@ import {
   getOrderedWeekdays,
   getWeekDates,
   getWeekDayIndex,
+  isSlotActiveOnDate,
   packOverlappingEvents,
   shiftDateString,
   shiftMonthString,
@@ -32,7 +31,9 @@ import {
   timeToMinutes,
 } from '../lib/dates';
 import { getSubjectColor } from '../lib/colors';
+import { SessionMetaBadges } from '../components/SessionMetaBadges';
 import type { QuickAddTab } from '../components/QuickAddModal';
+import type { DeliveryMode, MeetingPlatform, SessionType } from '../types';
 
 type CalendarMode = 'month' | 'week' | 'day' | 'agenda';
 type EventFilterKey = 'classes' | 'exams' | 'tasks' | 'habits' | 'alarms';
@@ -47,6 +48,12 @@ interface CalendarEventItem {
   colorId: string;
   room?: string;
   countdownLabel?: string;
+  sessionType?: SessionType;
+  deliveryMode?: DeliveryMode;
+  section?: string;
+  group?: string;
+  meetingUrl?: string;
+  platform?: MeetingPlatform;
 }
 
 export const CalendarView: React.FC<{
@@ -75,6 +82,8 @@ export const CalendarView: React.FC<{
     habits: true,
     alarms: true,
   });
+  const [filterSessionType, setFilterSessionType] = useState<'all' | SessionType>('all');
+  const [filterDeliveryMode, setFilterDeliveryMode] = useState<'all' | DeliveryMode>('all');
 
   const toggleFilter = (key: EventFilterKey) => {
     setFilters((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -127,6 +136,9 @@ export const CalendarView: React.FC<{
             colorId: subj?.color ?? 'terracotta',
             room: ex.room,
             countdownLabel: cd.label,
+            deliveryMode: ex.mode ?? 'in_person',
+            meetingUrl: ex.meetingUrl,
+            platform: ex.platform,
           });
         }
       }
@@ -134,7 +146,15 @@ export const CalendarView: React.FC<{
 
     if (filters.classes) {
       for (const sl of timetable) {
-        if (sl.dayOfWeek === dow && !sl.excludedDates?.includes(dateStr)) {
+        if (
+          sl.dayOfWeek === dow &&
+          isSlotActiveOnDate(sl, dateStr, settings.weekStart)
+        ) {
+          const slType = sl.type ?? 'lecture';
+          const slMode = sl.mode ?? 'in_person';
+          if (filterSessionType !== 'all' && slType !== filterSessionType) continue;
+          if (filterDeliveryMode !== 'all' && slMode !== filterDeliveryMode) continue;
+
           const subj = subjects.find((s) => s.id === sl.subjectId);
           items.push({
             id: `class-${sl.id}-${dateStr}`,
@@ -145,6 +165,12 @@ export const CalendarView: React.FC<{
             subjectId: sl.subjectId,
             colorId: sl.customColor ?? subj?.color ?? 'honey',
             room: sl.room,
+            sessionType: slType,
+            deliveryMode: slMode,
+            section: sl.section,
+            group: sl.group,
+            meetingUrl: sl.meetingUrl,
+            platform: sl.platform,
           });
         }
       }
@@ -222,7 +248,20 @@ export const CalendarView: React.FC<{
   const selectedDayEvents = useMemo(
     () => getEventsForDate(selectedDay),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [selectedDay, exams, timetable, tasks, alarms, subjects, filters, lang, timeFormat, digitsStyle]
+    [
+      selectedDay,
+      exams,
+      timetable,
+      tasks,
+      alarms,
+      subjects,
+      filters,
+      filterSessionType,
+      filterDeliveryMode,
+      lang,
+      timeFormat,
+      digitsStyle,
+    ]
   );
 
   const selectedDayHabits = useMemo(() => {
@@ -327,7 +366,7 @@ export const CalendarView: React.FC<{
         </div>
       </div>
 
-      {/* Filter Chips + Heat-Tint Toggle */}
+      {/* Filter Chips + Class Type/Mode Sub-Filters + Heat-Tint Toggle */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-4 py-2.5">
         <div className="flex flex-wrap items-center gap-2">
           {(
@@ -376,6 +415,35 @@ export const CalendarView: React.FC<{
               </button>
             );
           })}
+
+          {filters.classes && (
+            <>
+              <select
+                value={filterSessionType}
+                onChange={(e) => setFilterSessionType(e.target.value as 'all' | SessionType)}
+                aria-label={t('classMode.filterByType')}
+                className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2.5 py-1.5 text-xs font-semibold text-[var(--text-primary)]"
+              >
+                <option value="all">{t('classMode.allTypes')}</option>
+                <option value="lecture">{t('classMode.type.lecture')}</option>
+                <option value="td">{t('classMode.type.td')}</option>
+                <option value="tp">{t('classMode.type.tp')}</option>
+                <option value="other">{t('classMode.type.other')}</option>
+              </select>
+
+              <select
+                value={filterDeliveryMode}
+                onChange={(e) => setFilterDeliveryMode(e.target.value as 'all' | DeliveryMode)}
+                aria-label={t('classMode.filterByMode')}
+                className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2.5 py-1.5 text-xs font-semibold text-[var(--text-primary)]"
+              >
+                <option value="all">{t('classMode.allModes')}</option>
+                <option value="in_person">{t('classMode.mode.in_person')}</option>
+                <option value="remote">{t('classMode.mode.remote')}</option>
+                <option value="hybrid">{t('classMode.mode.hybrid')}</option>
+              </select>
+            </>
+          )}
         </div>
 
         <button
@@ -577,13 +645,38 @@ export const CalendarView: React.FC<{
                         {ev.title}
                       </div>
 
-                      <div className="flex flex-wrap items-center justify-between gap-2 mt-1.5 text-xs text-[var(--text-secondary)]">
+                      {(ev.sessionType || ev.deliveryMode) && (
+                        <div className="mt-1.5">
+                          <SessionMetaBadges
+                            type={ev.sessionType}
+                            mode={ev.deliveryMode}
+                            section={ev.section}
+                            group={ev.group}
+                            platform={ev.platform}
+                            compact
+                          />
+                        </div>
+                      )}
+
+                      <div className="flex flex-wrap items-center justify-between gap-2 mt-2 text-xs text-[var(--text-secondary)]">
                         {ev.room && <span>{ev.room}</span>}
                         {ev.countdownLabel && (
                           <span className="font-semibold text-[var(--accent-primary)]">
                             {ev.countdownLabel}
                           </span>
                         )}
+                        {ev.meetingUrl &&
+                          (ev.deliveryMode === 'remote' || ev.deliveryMode === 'hybrid') && (
+                            <a
+                              href={ev.meetingUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 rounded-lg bg-sky-600 hover:bg-sky-500 text-white px-2.5 py-1 text-[11px] font-bold transition"
+                            >
+                              <ExternalLink className="h-3 w-3" />
+                              <span>{t('classMode.joinCall')}</span>
+                            </a>
+                          )}
                       </div>
                     </div>
                   );
@@ -789,22 +882,45 @@ export const CalendarView: React.FC<{
                           key={ev.id}
                           className={`rounded-xl border p-3 flex items-center justify-between gap-3 ${cStyle.softBg} ${cStyle.border}`}
                         >
-                          <div className="min-w-0">
+                          <div className="min-w-0 space-y-1">
                             <div className="text-xs font-bold text-[var(--text-primary)] truncate">
                               {ev.title}
                             </div>
+                            {(ev.sessionType || ev.deliveryMode) && (
+                              <SessionMetaBadges
+                                type={ev.sessionType}
+                                mode={ev.deliveryMode}
+                                section={ev.section}
+                                group={ev.group}
+                                compact
+                              />
+                            )}
                             {ev.room && (
                               <div className="text-[11px] text-[var(--text-secondary)] truncate">
                                 {ev.room}
                               </div>
                             )}
                           </div>
-                          <span
-                            dir="ltr"
-                            className="text-xs font-mono tabular-nums font-bold text-[var(--text-primary)] shrink-0"
-                          >
-                            {formatTime(ev.startTime)}
-                          </span>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {ev.meetingUrl &&
+                              (ev.deliveryMode === 'remote' || ev.deliveryMode === 'hybrid') && (
+                                <a
+                                  href={ev.meetingUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 rounded-lg bg-sky-600 hover:bg-sky-500 text-white px-2 py-1 text-[10px] font-bold transition"
+                                >
+                                  <ExternalLink className="h-3 w-3" />
+                                  <span>{t('classMode.joinCall')}</span>
+                                </a>
+                              )}
+                            <span
+                              dir="ltr"
+                              className="text-xs font-mono tabular-nums font-bold text-[var(--text-primary)]"
+                            >
+                              {formatTime(ev.startTime)}
+                            </span>
+                          </div>
                         </div>
                       );
                     })}

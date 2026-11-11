@@ -249,6 +249,10 @@ body {
   display: none;
 }
 
+.waqti-slot-badge-text {
+  display: none;
+}
+
 @container slotblock (min-width: 116px) {
   .waqti-slot-time-full {
     display: inline;
@@ -262,6 +266,25 @@ body {
   .waqti-slot-meta {
     display: flex;
   }
+}
+
+@container slotblock (min-width: 138px) {
+  .waqti-slot-badge-text {
+    display: inline;
+  }
+}
+
+@keyframes waqti-slot-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 var(--accent-glow);
+  }
+  50% {
+    box-shadow: 0 0 0 6px var(--accent-glow);
+  }
+}
+
+.waqti-slot-highlight {
+  animation: waqti-slot-pulse 1.4s ease-in-out 3;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -2,17 +2,19 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {
+  computeStatsByTypeAndMode,
   computeTimetableBlockMetrics,
   computeTimetableGridHours,
   computeWeeklyTimetableSummary,
   formatShiftPillLabel,
+  generateIcsContent,
   isSlotActiveOnDate,
   packOverlappingEvents,
   shouldShowCompactTimeOnly,
   snapMinutesToStep,
 } from '../lib/dates';
 import { formatTimeRange } from '../lib/i18n';
-import type { TimetableSlot } from '../types';
+import type { AttendanceRecord, Subject, TimetableSlot } from '../types';
 
 test('overlapping-class column packing assigns side-by-side columns without overlapping text', () => {
   const slots: TimetableSlot[] = [
@@ -121,6 +123,8 @@ test('5-minute snapping, auto-fit grid hours, occurrence filtering, and weekly s
       teacher: 'Dr. Tariq',
       recurrence: 'weekly',
       excludedDates: ['2026-11-17'],
+      semesterStart: '2026-10-01',
+      semesterEnd: '2026-12-31',
     },
   ];
 
@@ -128,9 +132,10 @@ test('5-minute snapping, auto-fit grid hours, occurrence filtering, and weekly s
   assert.equal(gridHours.startHour, 7);
   assert.ok(gridHours.endHour >= 18);
 
-  // Active on 2026-11-10 (Tuesday), excluded on 2026-11-17
+  // Active on 2026-11-10 (Tuesday), excluded on 2026-11-17, outside semester on 2027-02-02
   assert.equal(isSlotActiveOnDate(slots[0], '2026-11-10', 2), true);
   assert.equal(isSlotActiveOnDate(slots[0], '2026-11-17', 2), false);
+  assert.equal(isSlotActiveOnDate(slots[0], '2027-02-02', 2), false);
 
   const summary = computeWeeklyTimetableSummary(slots, [
     '2026-11-07',
@@ -143,4 +148,85 @@ test('5-minute snapping, auto-fit grid hours, occurrence filtering, and weekly s
   ]);
   assert.equal(summary.totalHours, 1.5);
   assert.equal(summary.busiestDayIndex, 2);
+});
+
+test('computeStatsByTypeAndMode and generateIcsContent handle session types, delivery modes, and online links accurately', () => {
+  const subjects: Subject[] = [
+    {
+      id: 'subj-1',
+      name: 'Algèbre 1',
+      color: 'honey',
+      icon: 'BookOpen',
+      teacher: 'Pr. Benali',
+      room: 'Amphi A',
+      coefficient: 5,
+      weeklyGoalHours: 6,
+      archived: false,
+      createdAt: '2026-10-01T00:00:00.000Z',
+    },
+  ];
+
+  const slots: TimetableSlot[] = [
+    {
+      id: 'sl-1',
+      subjectId: 'subj-1',
+      dayOfWeek: 1,
+      startTime: '08:00',
+      endTime: '09:30',
+      room: '',
+      teacher: 'Pr. Benali',
+      recurrence: 'weekly',
+      type: 'lecture',
+      mode: 'remote',
+      meetingUrl: 'https://meet.google.com/abc-defg-hij',
+      platform: 'meet',
+      section: 'A',
+      group: 'G1',
+    },
+    {
+      id: 'sl-2',
+      subjectId: 'subj-1',
+      dayOfWeek: 3,
+      startTime: '10:00',
+      endTime: '12:00',
+      room: 'Lab 2',
+      teacher: 'Dr. Khelil',
+      recurrence: 'weekly',
+      type: 'tp',
+      mode: 'in_person',
+      group: 'G2',
+    },
+  ];
+
+  const attendance: AttendanceRecord[] = [
+    {
+      id: 'a1',
+      slotId: 'sl-1',
+      subjectId: 'subj-1',
+      date: '2026-11-09',
+      status: 'attended',
+    },
+    {
+      id: 'a2',
+      slotId: 'sl-2',
+      subjectId: 'subj-1',
+      date: '2026-11-11',
+      status: 'absent',
+    },
+  ];
+
+  const stats = computeStatsByTypeAndMode(slots, attendance);
+  assert.equal(stats.hoursByType.lecture, 1.5);
+  assert.equal(stats.hoursByType.tp, 2);
+  assert.equal(stats.hoursByMode.remote, 1.5);
+  assert.equal(stats.hoursByMode.in_person, 2);
+  assert.equal(stats.attendanceByType.lecture.rate, 100);
+  assert.equal(stats.attendanceByType.tp.rate, 0);
+  assert.equal(stats.attendanceByMode.remote.rate, 100);
+  assert.equal(stats.attendanceByMode.in_person.rate, 0);
+
+  const ics = generateIcsContent(slots, [], [], subjects, '2026-11-09');
+  assert.ok(ics.includes('[LECTURE] Algèbre 1'));
+  assert.ok(ics.includes('https://meet.google.com/abc-defg-hij'));
+  assert.ok(ics.includes('Mode: remote'));
 });

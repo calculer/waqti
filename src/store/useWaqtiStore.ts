@@ -42,8 +42,15 @@ import {
 } from '../lib/i18n';
 import { buildSeedDemoData } from '../lib/demoData';
 import { SUBJECT_COLORS } from '../lib/colors';
+import type { ParsedTimetableRow } from '../lib/timetableParser';
+import { fuzzyMatchSubject } from '../lib/timetableParser';
 
-export const STORAGE_SCHEMA_VERSION = 3;
+export const STORAGE_SCHEMA_VERSION = 4;
+
+export interface SmartPasteInitialPayload {
+  plainText?: string;
+  htmlText?: string;
+}
 
 export interface WaqtiState {
   schemaVersion: number;
@@ -62,7 +69,7 @@ export interface WaqtiState {
   notifications: AppNotification[];
   timer: ActiveTimerState;
 
-  // New v3 state slices
+  // New v3/v4 state slices
   alarms: AlarmReminder[];
   activeRingingAlarm: AlarmReminder | null;
   missedAlarms: MissedAlarmItem[];
@@ -73,10 +80,16 @@ export interface WaqtiState {
   snapshots: BackupSnapshot[];
   xp: number;
   level: number;
+  isSmartPasteOpen: boolean;
+  smartPasteInitialPayload: SmartPasteInitialPayload | null;
+  recentlyImportedSlotIds: string[];
 
   // Navigation & Clock Rollover
   setActiveNav: (nav: NavSection, subjectId?: string | null) => void;
   refreshTodayIfNeeded: () => void;
+  openSmartPaste: (payload?: SmartPasteInitialPayload | null) => void;
+  closeSmartPaste: () => void;
+  clearRecentlyImportedSlots: () => void;
 
   // Settings & Language
   setLanguage: (lang: Language) => void;
@@ -90,11 +103,16 @@ export interface WaqtiState {
   updateSubject: (id: string, partial: Partial<Subject>) => void;
   deleteSubject: (id: string) => Subject | null;
 
-  // Timetable CRUD
+  // Timetable CRUD & Smart Import
   addTimetableSlot: (slot: Omit<TimetableSlot, 'id'>) => string;
   updateTimetableSlot: (id: string, partial: Partial<TimetableSlot>) => void;
   deleteTimetableSlot: (id: string) => TimetableSlot | null;
   duplicateDaySlots: (fromDay: number, toDay: number) => void;
+  batchImportTimetable: (options: {
+    rows: ParsedTimetableRow[];
+    importMode: 'add' | 'replace';
+    duplicateHandling: 'skip' | 'replace' | 'keep';
+  }) => { importedCount: number; createdSubjectsCount: number; snapshotId: string };
 
   // Exams & Revision CRUD
   addExam: (exam: Omit<Exam, 'id'>) => string;
@@ -183,6 +201,10 @@ const defaultSettings: UserSettings = {
   streakFreezeAvailable: true,
   hasCompletedOnboarding: false,
   isDemoData: true,
+  defaultClassDurationMinutes: 90,
+  defaultTravelLeadMinutes: 30,
+  defaultJoinLeadMinutes: 10,
+  customGeminiApiKey: '',
 };
 
 function normalizeColor(c: unknown): SubjectColorId {
@@ -220,14 +242,35 @@ export function migrateWaqtiState(persistedState: unknown, _version: number): Pa
     ...defaultSettings,
     ...(rawSettings as Partial<UserSettings>),
     accent: normalizeAccent(rawSettings.accent),
+    defaultClassDurationMinutes:
+      typeof rawSettings.defaultClassDurationMinutes === 'number'
+        ? rawSettings.defaultClassDurationMinutes
+        : 90,
+    defaultTravelLeadMinutes:
+      typeof rawSettings.defaultTravelLeadMinutes === 'number'
+        ? rawSettings.defaultTravelLeadMinutes
+        : 30,
+    defaultJoinLeadMinutes:
+      typeof rawSettings.defaultJoinLeadMinutes === 'number'
+        ? rawSettings.defaultJoinLeadMinutes
+        : 10,
   };
 
   const rawSubjects = Array.isArray(raw.subjects)
     ? (raw.subjects as Subject[]).map((s) => ({
         ...s,
         color: normalizeColor(s.color),
+        defaultMode: s.defaultMode ?? 'in_person',
       }))
     : initialDemo.subjects;
+
+  const rawTimetable = Array.isArray(raw.timetable)
+    ? (raw.timetable as TimetableSlot[]).map((sl) => ({
+        ...sl,
+        type: sl.type ?? 'lecture',
+        mode: sl.mode ?? 'in_person',
+      }))
+    : initialDemo.timetable;
 
   const rawHabits = Array.isArray(raw.habits)
     ? (raw.habits as Habit[]).map((h) => ({
@@ -241,7 +284,7 @@ export function migrateWaqtiState(persistedState: unknown, _version: number): Pa
     schemaVersion: STORAGE_SCHEMA_VERSION,
     settings,
     subjects: rawSubjects,
-    timetable: Array.isArray(raw.timetable) ? raw.timetable : initialDemo.timetable,
+    timetable: rawTimetable,
     exams: Array.isArray(raw.exams) ? raw.exams : initialDemo.exams,
     revisionSessions: Array.isArray(raw.revisionSessions)
       ? raw.revisionSessions
@@ -292,6 +335,9 @@ export const useWaqtiStore = create<WaqtiState>()(
       snapshots: [],
       xp: 340,
       level: 4,
+      isSmartPasteOpen: false,
+      smartPasteInitialPayload: null,
+      recentlyImportedSlotIds: [],
       notifications: [
         {
           id: 'notif-welcome',
@@ -315,6 +361,21 @@ export const useWaqtiStore = create<WaqtiState>()(
 
       setActiveNav: (nav, subjectId = null) =>
         set({ activeNav: nav, selectedSubjectId: subjectId }),
+
+      openSmartPaste: (payload = null) =>
+        set({
+          isSmartPasteOpen: true,
+          smartPasteInitialPayload: payload,
+        }),
+
+      closeSmartPaste: () =>
+        set({
+          isSmartPasteOpen: false,
+          smartPasteInitialPayload: null,
+        }),
+
+      clearRecentlyImportedSlots: () =>
+        set({ recentlyImportedSlotIds: [] }),
 
       refreshTodayIfNeeded: () => {
         const tz = get().settings.timezone;
@@ -498,6 +559,107 @@ export const useWaqtiStore = create<WaqtiState>()(
             timetable: [...state.timetable, ...cloned],
           };
         }),
+
+      batchImportTimetable: ({ rows, importMode, duplicateHandling }) => {
+        const state = get();
+        // Always save an automatic backup snapshot before importing
+        state.createSnapshot(
+          importMode === 'replace'
+            ? 'Pre-Smart Paste Replace Backup'
+            : 'Pre-Smart Paste Import Backup'
+        );
+        const latestSnapshotId = get().snapshots[0]?.id ?? '';
+
+        const includedRows = rows.filter((r) => r.include && r.dayOfWeek !== null);
+        const nextSubjects = [...state.subjects];
+        let nextTimetable = importMode === 'replace' ? [] : [...state.timetable];
+        const importedSlotIds: string[] = [];
+        let createdSubjectsCount = 0;
+
+        for (let i = 0; i < includedRows.length; i++) {
+          const r = includedRows[i];
+          if (r.dayOfWeek === null) continue;
+
+          // Handle duplicates if adding to existing timetable
+          if (importMode === 'add' && r.duplicateOfSlotId) {
+            if (duplicateHandling === 'skip') {
+              continue;
+            }
+            if (duplicateHandling === 'replace') {
+              nextTimetable = nextTimetable.filter((sl) => sl.id !== r.duplicateOfSlotId);
+            }
+          }
+
+          // Resolve or create subject
+          let subjectId = r.matchedSubjectId;
+          if (!subjectId || !nextSubjects.some((s) => s.id === subjectId)) {
+            const { matchedSubject } = fuzzyMatchSubject(r.subjectName, nextSubjects, 0.72);
+            if (matchedSubject) {
+              subjectId = matchedSubject.id;
+            } else {
+              const newSubjId = `subj-imp-${Date.now()}-${i}`;
+              const newSubj: Subject = {
+                id: newSubjId,
+                name: r.subjectName.trim() || 'Untitled Course',
+                color: r.proposedColor || 'honey',
+                icon: 'BookOpen',
+                teacher: r.teacher || '',
+                room: r.room || '',
+                coefficient: 3,
+                weeklyGoalHours: 4,
+                defaultMode: r.mode || 'in_person',
+                archived: false,
+                createdAt: new Date().toISOString(),
+              };
+              nextSubjects.push(newSubj);
+              subjectId = newSubjId;
+              createdSubjectsCount++;
+            }
+          }
+
+          const newSlotId = `slot-imp-${Date.now()}-${i}`;
+          const newSlot: TimetableSlot = {
+            id: newSlotId,
+            subjectId,
+            dayOfWeek: r.dayOfWeek,
+            startTime: r.startTime,
+            endTime: r.endTime,
+            type: r.sessionType === 'unknown' ? 'lecture' : r.sessionType,
+            section: r.section || undefined,
+            group: r.group || undefined,
+            room: r.room || '',
+            teacher: r.teacher || '',
+            mode: r.mode || 'in_person',
+            meetingUrl: r.meetingUrl || undefined,
+            platform: r.platform,
+            recurrence: r.recurrence || 'weekly',
+            weekParity: r.weekParity && r.weekParity !== 'all' ? r.weekParity : undefined,
+            semesterStart: r.semesterStart || undefined,
+            semesterEnd: r.semesterEnd || undefined,
+          };
+
+          nextTimetable.push(newSlot);
+          importedSlotIds.push(newSlotId);
+        }
+
+        set({
+          subjects: nextSubjects,
+          timetable: nextTimetable,
+          recentlyImportedSlotIds: importedSlotIds,
+          isSmartPasteOpen: false,
+          smartPasteInitialPayload: null,
+          settings: {
+            ...state.settings,
+            isDemoData: false,
+          },
+        });
+
+        return {
+          importedCount: importedSlotIds.length,
+          createdSubjectsCount,
+          snapshotId: latestSnapshotId,
+        };
+      },
 
       addExam: (exam) => {
         const id = `exam-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;

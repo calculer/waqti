@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Check, Sparkles, X } from 'lucide-react';
+import { Check, ClipboardPaste, Sparkles, X } from 'lucide-react';
 import { useWaqtiStore } from '../store/useWaqtiStore';
 import { useTranslation } from '../hooks/useTranslation';
 import { Logo } from './WaqtiLogo';
@@ -19,6 +19,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({ isOpen, onClos
   const subjects = useWaqtiStore((s) => s.subjects);
   const addSubject = useWaqtiStore((s) => s.addSubject);
   const loadDemoWorkspace = useWaqtiStore((s) => s.loadDemoWorkspace);
+  const openSmartPaste = useWaqtiStore((s) => s.openSmartPaste);
 
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [newSubjName, setNewSubjName] = useState('');
@@ -259,17 +260,32 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({ isOpen, onClos
               </div>
             </div>
 
-            <button
-              type="button"
-              onClick={() => {
-                loadDemoWorkspace(lang);
-                onClose();
-              }}
-              className="flex w-full items-center justify-center gap-2 rounded-2xl border border-[var(--accent-primary)] bg-[var(--accent-soft)] py-3 px-4 text-xs font-semibold text-[var(--accent-primary)] hover:opacity-90 transition"
-            >
-              <Sparkles className="h-4 w-4" />
-              <span>{t('onboarding.useDemo')}</span>
-            </button>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <button
+                type="button"
+                onClick={() => {
+                  updateSettings({ hasCompletedOnboarding: true });
+                  onClose();
+                  openSmartPaste();
+                }}
+                className="flex w-full items-center justify-center gap-2 rounded-2xl btn-primary-waqti py-3 px-4 text-xs font-semibold shadow-sm hover:opacity-95 transition"
+              >
+                <ClipboardPaste className="h-4 w-4" />
+                <span>{t('smartPaste.button')}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  loadDemoWorkspace(lang);
+                  onClose();
+                }}
+                className="flex w-full items-center justify-center gap-2 rounded-2xl border border-[var(--accent-primary)] bg-[var(--accent-soft)] py-3 px-4 text-xs font-semibold text-[var(--accent-primary)] hover:opacity-90 transition"
+              >
+                <Sparkles className="h-4 w-4" />
+                <span>{t('onboarding.useDemo')}</span>
+              </button>
+            </div>
           </div>
         )}
 

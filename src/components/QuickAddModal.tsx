@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { X, AlertTriangle } from 'lucide-react';
+import { X, AlertTriangle, ClipboardPaste } from 'lucide-react';
 import { useWaqtiStore } from '../store/useWaqtiStore';
 import { useTranslation } from '../hooks/useTranslation';
 import {
@@ -8,7 +8,19 @@ import {
   isValidTimeOrder,
   shiftDateString,
 } from '../lib/dates';
-import type { AlarmRecurrence, ExamType, PriorityLevel, WeekDay } from '../types';
+import { detectMeetingPlatform } from '../lib/timetableParser';
+import {
+  DeliveryModeSegmentedControl,
+  SessionTypeSegmentedControl,
+} from './SessionMetaBadges';
+import type {
+  AlarmRecurrence,
+  DeliveryMode,
+  ExamType,
+  PriorityLevel,
+  SessionType,
+  WeekDay,
+} from '../types';
 
 export type QuickAddTab = 'task' | 'exam' | 'slot' | 'habit' | 'alarm';
 
@@ -35,6 +47,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
   const addTimetableSlot = useWaqtiStore((s) => s.addTimetableSlot);
   const addHabit = useWaqtiStore((s) => s.addHabit);
   const addAlarm = useWaqtiStore((s) => s.addAlarm);
+  const openSmartPaste = useWaqtiStore((s) => s.openSmartPaste);
 
   const [tab, setTab] = useState<QuickAddTab>(initialTab);
   const [title, setTitle] = useState('');
@@ -43,6 +56,9 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
   const [startTime, setStartTime] = useState('09:00');
   const [endTime, setEndTime] = useState('10:30');
   const [dayOfWeek, setDayOfWeek] = useState<WeekDay>(1);
+  const [sessionType, setSessionType] = useState<SessionType>('lecture');
+  const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>('in_person');
+  const [meetingUrl, setMeetingUrl] = useState('');
   const [priority, setPriority] = useState<PriorityLevel>('high');
   const [examType, setExamType] = useState<ExamType>('controle');
   const [alarmRecurrence, setAlarmRecurrence] = useState<AlarmRecurrence>('daily');
@@ -80,14 +96,22 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
         return;
       }
       const subj = subjects.find((s) => s.id === activeSubjectId);
+      const trimmedUrl = meetingUrl.trim();
       addTimetableSlot({
         subjectId: activeSubjectId,
         dayOfWeek,
         startTime,
         endTime,
-        room: subj?.room ?? 'Room 101',
+        room:
+          deliveryMode === 'remote' && !subj?.room
+            ? ''
+            : (subj?.room ?? 'Room 101'),
         teacher: subj?.teacher ?? '',
         recurrence: 'weekly',
+        type: sessionType,
+        mode: deliveryMode,
+        meetingUrl: trimmedUrl || undefined,
+        platform: trimmedUrl ? detectMeetingPlatform(trimmedUrl) : undefined,
       });
     } else if (tab === 'task') {
       addTask({
@@ -158,18 +182,31 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="w-10 h-1.5 bg-[var(--border-strong)] rounded-full mx-auto mb-4 md:hidden" />
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between gap-2 mb-4">
           <h3 className="text-lg font-bold font-display text-[var(--text-primary)]">
             {t('dashboard.quickAdd')}
           </h3>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label={t('common.cancel')}
-            className="rounded-xl p-2 text-[var(--text-muted)] hover:bg-[var(--bg-elevated)]"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                openSmartPaste();
+              }}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--accent-primary)] bg-[var(--accent-soft)] px-3 py-1.5 text-xs font-semibold text-[var(--accent-strong)] hover:opacity-90 transition"
+            >
+              <ClipboardPaste className="h-3.5 w-3.5" />
+              <span>{t('smartPaste.button')}</span>
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label={t('common.cancel')}
+              className="rounded-xl p-2 text-[var(--text-muted)] hover:bg-[var(--bg-elevated)]"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </div>
 
         {/* Segmented Control */}
@@ -228,7 +265,16 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
               </label>
               <select
                 value={activeSubjectId}
-                onChange={(e) => setSubjectId(e.target.value)}
+                onChange={(e) => {
+                  const id = e.target.value;
+                  setSubjectId(id);
+                  const found = subjects.find((s) => s.id === id);
+                  if (found) {
+                    setDeliveryMode(
+                      found.modeByType?.[sessionType] ?? found.defaultMode ?? 'in_person'
+                    );
+                  }
+                }}
                 className="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3.5 py-2.5 text-sm text-[var(--text-primary)] focus:border-[var(--accent-primary)] focus:outline-none"
               >
                 {subjects.map((s) => (
@@ -241,47 +287,92 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
           )}
 
           {tab === 'slot' ? (
-            <div className="grid grid-cols-3 gap-3">
-              <div>
-                <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">
-                  {t('timetable.day')}
-                </label>
-                <select
-                  value={dayOfWeek}
-                  onChange={(e) => setDayOfWeek(Number(e.target.value) as WeekDay)}
-                  className="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-2.5 text-sm text-[var(--text-primary)]"
-                >
-                  {weekdays.map((w) => (
-                    <option key={w.dayIndex} value={w.dayIndex}>
-                      {w.label}
-                    </option>
-                  ))}
-                </select>
+            <div className="space-y-3">
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">
+                    {t('timetable.day')}
+                  </label>
+                  <select
+                    value={dayOfWeek}
+                    onChange={(e) => setDayOfWeek(Number(e.target.value) as WeekDay)}
+                    className="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-2.5 text-sm text-[var(--text-primary)]"
+                  >
+                    {weekdays.map((w) => (
+                      <option key={w.dayIndex} value={w.dayIndex}>
+                        {w.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">
+                    {t('timetable.startTime')}
+                  </label>
+                  <input
+                    type="time"
+                    dir="ltr"
+                    value={startTime}
+                    onChange={(e) => setStartTime(e.target.value)}
+                    className="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-2.5 text-sm font-mono-tabular text-[var(--text-primary)]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">
+                    {t('timetable.endTime')}
+                  </label>
+                  <input
+                    type="time"
+                    dir="ltr"
+                    value={endTime}
+                    onChange={(e) => setEndTime(e.target.value)}
+                    className="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-2.5 text-sm font-mono-tabular text-[var(--text-primary)]"
+                  />
+                </div>
               </div>
-              <div>
-                <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">
-                  {t('timetable.startTime')}
-                </label>
-                <input
-                  type="time"
-                  dir="ltr"
-                  value={startTime}
-                  onChange={(e) => setStartTime(e.target.value)}
-                  className="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-2.5 text-sm font-mono-tabular text-[var(--text-primary)]"
-                />
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
+                    {t('classMode.sessionType')}
+                  </label>
+                  <SessionTypeSegmentedControl
+                    value={sessionType}
+                    onChange={(nextType) => {
+                      setSessionType(nextType);
+                      const found = subjects.find((s) => s.id === activeSubjectId);
+                      if (found?.modeByType?.[nextType]) {
+                        setDeliveryMode(found.modeByType[nextType]!);
+                      }
+                    }}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
+                    {t('classMode.deliveryMode')}
+                  </label>
+                  <DeliveryModeSegmentedControl
+                    value={deliveryMode}
+                    onChange={setDeliveryMode}
+                  />
+                </div>
               </div>
-              <div>
-                <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">
-                  {t('timetable.endTime')}
-                </label>
-                <input
-                  type="time"
-                  dir="ltr"
-                  value={endTime}
-                  onChange={(e) => setEndTime(e.target.value)}
-                  className="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-2.5 text-sm font-mono-tabular text-[var(--text-primary)]"
-                />
-              </div>
+
+              {(deliveryMode === 'remote' || deliveryMode === 'hybrid') && (
+                <div>
+                  <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
+                    {t('classMode.meetingUrl')}
+                  </label>
+                  <input
+                    type="url"
+                    dir="ltr"
+                    value={meetingUrl}
+                    onChange={(e) => setMeetingUrl(e.target.value)}
+                    placeholder={t('classMode.meetingUrlPlaceholder')}
+                    className="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3.5 py-2 text-xs font-mono text-[var(--text-primary)]"
+                  />
+                </div>
+              )}
             </div>
           ) : tab !== 'habit' ? (
             <div className="grid grid-cols-2 gap-3">

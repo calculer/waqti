@@ -8,6 +8,7 @@ import {
   format,
   getDate,
   getDay,
+  getISOWeek,
   isAfter,
   isBefore,
   isSameDay,
@@ -21,11 +22,14 @@ import { arSA, enUS, fr } from 'date-fns/locale';
 import type {
   ActiveTimerState,
   AlarmReminder,
+  AttendanceRecord,
+  DeliveryMode,
   DigitsStyle,
   Exam,
   Language,
   MissedAlarmItem,
   RevisionSession,
+  SessionType,
   StudyTask,
   Subject,
   TimeFormat,
@@ -836,20 +840,39 @@ export function generateIcsContent(
     );
   }
 
-  // Export current week's classes
+  // Export current week's classes with full type, section, group, teacher, room/meetingUrl, and mode
   const weekDates = getWeekDates(todayStr, 1);
   for (const dStr of weekDates) {
     const dow = getWeekDayIndex(dStr);
-    const daySlots = timetable.filter((s) => s.dayOfWeek === dow);
+    const daySlots = timetable.filter((s) => isSlotActiveOnDate(s, dStr, dow));
     for (const slot of daySlots) {
       const subj = subjects.find((s) => s.id === slot.subjectId);
+      const typeTag = (slot.type || 'lecture').toUpperCase();
+      const modeTag = slot.mode || 'in_person';
+      const locationStr =
+        modeTag === 'remote'
+          ? slot.meetingUrl || 'Online'
+          : modeTag === 'hybrid'
+            ? [slot.room, slot.meetingUrl].filter(Boolean).join(' / ') || 'Hybrid'
+            : slot.room || '';
+      const descParts = [
+        `Type: ${typeTag}`,
+        `Mode: ${modeTag}`,
+        slot.section ? `Section: ${slot.section}` : '',
+        slot.group ? `Group: ${slot.group}` : '',
+        slot.teacher ? `Teacher: ${slot.teacher}` : '',
+        slot.room ? `Room: ${slot.room}` : '',
+        slot.meetingUrl ? `Meeting Link: ${slot.meetingUrl}` : '',
+      ].filter(Boolean);
+
       lines.push(
         'BEGIN:VEVENT',
         `UID:waqti-slot-${slot.id}-${dStr}@waqti.app`,
         `DTSTART:${toIcsDateTime(dStr, slot.startTime)}`,
         `DTEND:${toIcsDateTime(dStr, slot.endTime)}`,
-        `SUMMARY:${subj?.name ?? 'Class'}`,
-        `LOCATION:${slot.room || ''}`,
+        `SUMMARY:[${typeTag}] ${subj?.name ?? 'Class'}${slot.group ? ` (G${slot.group})` : ''}`,
+        `LOCATION:${locationStr}`,
+        `DESCRIPTION:${descParts.join('\\n')}`,
         'END:VEVENT'
       );
     }
@@ -861,7 +884,7 @@ export function generateIcsContent(
 
 /**
  * Checks whether a timetable slot occurs on a given "YYYY-MM-DD" date and dayOfWeek,
- * respecting single-occurrence `specificDate` and `excludedDates`.
+ * respecting single-occurrence `specificDate`, `excludedDates`, `semesterStart`/`semesterEnd`, and `weekParity`.
  */
 export function isSlotActiveOnDate(
   slot: TimetableSlot,
@@ -871,6 +894,14 @@ export function isSlotActiveOnDate(
   if (slot.dayOfWeek !== dayOfWeek) return false;
   if (slot.excludedDates && slot.excludedDates.includes(dateStr)) return false;
   if (slot.specificDate && slot.specificDate !== dateStr) return false;
+  if (slot.semesterStart && dateStr < slot.semesterStart) return false;
+  if (slot.semesterEnd && dateStr > slot.semesterEnd) return false;
+  if (slot.weekParity && slot.weekParity !== 'all') {
+    const isoWk = getISOWeek(parseLocalDateTime(dateStr, '12:00'));
+    const isOdd = isoWk % 2 === 1;
+    if (slot.weekParity === 'odd' && !isOdd) return false;
+    if (slot.weekParity === 'even' && isOdd) return false;
+  }
   return true;
 }
 
@@ -1024,6 +1055,95 @@ export function computeWeeklyTimetableSummary(
     busiestDayIndex,
     busiestDayHours: Number((busiestDayMinutes / 60).toFixed(1)),
     freeSlotsCount,
+  };
+}
+
+/**
+ * Computes weekly class hours and attendance rates split by SessionType (lecture/td/tp/other)
+ * and DeliveryMode (in_person/remote/hybrid).
+ */
+export function computeStatsByTypeAndMode(
+  slots: TimetableSlot[],
+  attendance: AttendanceRecord[]
+): {
+  hoursByType: Record<SessionType, number>;
+  hoursByMode: Record<DeliveryMode, number>;
+  attendanceByType: Record<SessionType, { attended: number; total: number; rate: number | null }>;
+  attendanceByMode: Record<DeliveryMode, { attended: number; total: number; rate: number | null }>;
+} {
+  const minsByType: Record<SessionType, number> = {
+    lecture: 0,
+    td: 0,
+    tp: 0,
+    other: 0,
+  };
+  const minsByMode: Record<DeliveryMode, number> = {
+    in_person: 0,
+    remote: 0,
+    hybrid: 0,
+  };
+
+  const slotMap = new Map<string, TimetableSlot>();
+  for (const s of slots) {
+    slotMap.set(s.id, s);
+    const dur = Math.max(0, timeToMinutes(s.endTime) - timeToMinutes(s.startTime));
+    const st: SessionType = s.type || 'lecture';
+    const md: DeliveryMode = s.mode || 'in_person';
+    minsByType[st] = (minsByType[st] || 0) + dur;
+    minsByMode[md] = (minsByMode[md] || 0) + dur;
+  }
+
+  const attByType: Record<SessionType, { attended: number; total: number; rate: number | null }> = {
+    lecture: { attended: 0, total: 0, rate: null },
+    td: { attended: 0, total: 0, rate: null },
+    tp: { attended: 0, total: 0, rate: null },
+    other: { attended: 0, total: 0, rate: null },
+  };
+  const attByMode: Record<DeliveryMode, { attended: number; total: number; rate: number | null }> = {
+    in_person: { attended: 0, total: 0, rate: null },
+    remote: { attended: 0, total: 0, rate: null },
+    hybrid: { attended: 0, total: 0, rate: null },
+  };
+
+  for (const rec of attendance) {
+    if (rec.status === 'cancelled') continue;
+    const slot = slotMap.get(rec.slotId);
+    const st: SessionType = slot?.type || 'lecture';
+    const md: DeliveryMode = slot?.mode || 'in_person';
+
+    attByType[st].total += 1;
+    attByMode[md].total += 1;
+    if (rec.status === 'attended') {
+      attByType[st].attended += 1;
+      attByMode[md].attended += 1;
+    }
+  }
+
+  for (const k of ['lecture', 'td', 'tp', 'other'] as const) {
+    if (attByType[k].total > 0) {
+      attByType[k].rate = Math.round((attByType[k].attended / attByType[k].total) * 100);
+    }
+  }
+  for (const m of ['in_person', 'remote', 'hybrid'] as const) {
+    if (attByMode[m].total > 0) {
+      attByMode[m].rate = Math.round((attByMode[m].attended / attByMode[m].total) * 100);
+    }
+  }
+
+  return {
+    hoursByType: {
+      lecture: Number((minsByType.lecture / 60).toFixed(1)),
+      td: Number((minsByType.td / 60).toFixed(1)),
+      tp: Number((minsByType.tp / 60).toFixed(1)),
+      other: Number((minsByType.other / 60).toFixed(1)),
+    },
+    hoursByMode: {
+      in_person: Number((minsByMode.in_person / 60).toFixed(1)),
+      remote: Number((minsByMode.remote / 60).toFixed(1)),
+      hybrid: Number((minsByMode.hybrid / 60).toFixed(1)),
+    },
+    attendanceByType: attByType,
+    attendanceByMode: attByMode,
   };
 }
 

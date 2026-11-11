@@ -26,6 +26,7 @@ import { CommandPalette } from './components/CommandPalette';
 import { QuickAddModal, type QuickAddTab } from './components/QuickAddModal';
 import { OnboardingModal } from './components/OnboardingModal';
 import { AlarmRingingModal } from './components/AlarmRingingModal';
+import { SmartPasteModal } from './components/SmartPasteModal';
 import { DashboardView } from './features/DashboardView';
 import { SubjectsView } from './features/SubjectsView';
 import { TimetableView } from './features/TimetableView';
@@ -52,6 +53,8 @@ export default function App() {
   const snoozeNotification = useWaqtiStore((s) => s.snoozeNotification);
   const refreshTodayIfNeeded = useWaqtiStore((s) => s.refreshTodayIfNeeded);
   const evaluateDueAlarms = useWaqtiStore((s) => s.evaluateDueAlarms);
+  const restoreSnapshot = useWaqtiStore((s) => s.restoreSnapshot);
+  const clearRecentlyImportedSlots = useWaqtiStore((s) => s.clearRecentlyImportedSlots);
 
   const [isCommandOpen, setIsCommandOpen] = useState(false);
   const [quickAddState, setQuickAddState] = useState<{
@@ -61,7 +64,9 @@ export default function App() {
   }>({ open: false, tab: 'task' });
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
   const [isNotifOpen, setIsNotifOpen] = useState(false);
-  const [undoEntry, setUndoEntry] = useState<UndoEntry | null>(null);
+  const [undoEntry, setUndoEntry] = useState<(UndoEntry & { customLabel?: string }) | null>(
+    null
+  );
   const [quickCaptureTrigger, setQuickCaptureTrigger] = useState(0);
 
   // Sync <html lang dir class data-accent> and meta theme-color dynamically
@@ -131,8 +136,12 @@ export default function App() {
     };
   }, [refreshTodayIfNeeded, evaluateDueAlarms, setActiveNav]);
 
-  const handlePushUndo = (labelKey: string, restore: () => void) => {
-    setUndoEntry({ id: String(Date.now()), labelKey, restore });
+  const handlePushUndo = (
+    labelKey: string,
+    restore: () => void,
+    customLabel?: string
+  ) => {
+    setUndoEntry({ id: String(Date.now()), labelKey, restore, customLabel });
   };
 
   const enabledAlarmsCount = alarms.filter((a) => a.enabled).length;
@@ -467,11 +476,11 @@ export default function App() {
         </button>
       </nav>
 
-      {/* Undo Deletion Toast */}
+      {/* Undo Deletion / Import Toast */}
       {undoEntry && (
         <div className="fixed bottom-20 md:bottom-6 end-6 z-50 flex items-center gap-3 rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-surface)] px-4 py-3 text-xs shadow-2xl">
           <span className="font-medium text-[var(--text-primary)]">
-            {t(undoEntry.labelKey as Parameters<typeof t>[0])}
+            {undoEntry.customLabel || t(undoEntry.labelKey as Parameters<typeof t>[0])}
           </span>
           <button
             type="button"
@@ -490,6 +499,23 @@ export default function App() {
       <OfflineIndicator />
 
       <AlarmRingingModal />
+
+      <SmartPasteModal
+        onImported={({ count, snapshotId }) => {
+          setActiveNav('timetable');
+          handlePushUndo(
+            'common.deletedToast',
+            () => {
+              restoreSnapshot(snapshotId);
+              clearRecentlyImportedSlots();
+            },
+            t('smartPaste.importedToast', { count: digits(count) })
+          );
+          window.setTimeout(() => {
+            clearRecentlyImportedSlots();
+          }, 5000);
+        }}
+      />
 
       <CommandPalette
         isOpen={isCommandOpen}

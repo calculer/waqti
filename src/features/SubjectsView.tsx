@@ -11,7 +11,11 @@ import { useWaqtiStore } from '../store/useWaqtiStore';
 import { useTranslation } from '../hooks/useTranslation';
 import { getSubjectColor, SUBJECT_COLOR_LIST, SUBJECT_COLORS } from '../lib/colors';
 import { EmptyHourglassIllustration } from '../components/WaqtiLogo';
-import type { Subject, SubjectColorId } from '../types';
+import {
+  DeliveryModeSegmentedControl,
+  SessionMetaBadges,
+} from '../components/SessionMetaBadges';
+import type { DeliveryMode, SessionType, Subject, SubjectColorId } from '../types';
 
 export const SubjectsView: React.FC<{
   onPushUndo: (labelKey: string, restore: () => void) => void;
@@ -39,6 +43,8 @@ export const SubjectsView: React.FC<{
   const [coefficient, setCoefficient] = useState(4);
   const [weeklyGoalHours, setWeeklyGoalHours] = useState(6);
   const [color, setColor] = useState<SubjectColorId>('honey');
+  const [defaultMode, setDefaultMode] = useState<DeliveryMode>('in_person');
+  const [modeByType, setModeByType] = useState<Partial<Record<SessionType, DeliveryMode>>>({});
   const [errorMsg, setErrorMsg] = useState('');
 
   const visibleSubjects = useMemo(
@@ -54,6 +60,8 @@ export const SubjectsView: React.FC<{
     setCoefficient(4);
     setWeeklyGoalHours(6);
     setColor('honey');
+    setDefaultMode('in_person');
+    setModeByType({});
     setErrorMsg('');
     setIsFormOpen(true);
   };
@@ -66,6 +74,8 @@ export const SubjectsView: React.FC<{
     setCoefficient(subj.coefficient);
     setWeeklyGoalHours(subj.weeklyGoalHours);
     setColor(subj.color);
+    setDefaultMode(subj.defaultMode ?? 'in_person');
+    setModeByType(subj.modeByType ?? {});
     setErrorMsg('');
     setIsFormOpen(true);
   };
@@ -77,6 +87,13 @@ export const SubjectsView: React.FC<{
       return;
     }
 
+    const cleanedModeByType: Partial<Record<SessionType, DeliveryMode>> = {};
+    for (const st of ['lecture', 'td', 'tp', 'other'] as SessionType[]) {
+      if (modeByType[st]) {
+        cleanedModeByType[st] = modeByType[st];
+      }
+    }
+
     if (editingSubject) {
       updateSubject(editingSubject.id, {
         name: name.trim(),
@@ -85,6 +102,8 @@ export const SubjectsView: React.FC<{
         coefficient: Math.max(1, coefficient),
         weeklyGoalHours: Math.max(1, weeklyGoalHours),
         color,
+        defaultMode,
+        modeByType: Object.keys(cleanedModeByType).length > 0 ? cleanedModeByType : undefined,
       });
     } else {
       addSubject({
@@ -95,6 +114,8 @@ export const SubjectsView: React.FC<{
         weeklyGoalHours: Math.max(1, weeklyGoalHours),
         color,
         icon: 'BookOpen',
+        defaultMode,
+        modeByType: Object.keys(cleanedModeByType).length > 0 ? cleanedModeByType : undefined,
       });
     }
     setIsFormOpen(false);
@@ -241,6 +262,47 @@ export const SubjectsView: React.FC<{
             </div>
           </div>
 
+          {/* Delivery Mode & Per-Type Delivery Mode Defaults */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-[var(--border-subtle)]">
+            <div>
+              <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">
+                {t('classMode.subjectDefaultMode')}
+              </label>
+              <DeliveryModeSegmentedControl value={defaultMode} onChange={setDefaultMode} />
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">
+                {t('classMode.perTypeDefaults')}
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                {(['lecture', 'td', 'tp'] as SessionType[]).map((st) => (
+                  <div key={st} className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-2">
+                    <div className="text-[10px] font-bold uppercase text-[var(--text-muted)] mb-1">
+                      {t(`classMode.type.${st}`)}
+                    </div>
+                    <select
+                      value={modeByType[st] ?? ''}
+                      onChange={(e) => {
+                        const val = e.target.value as DeliveryMode | '';
+                        setModeByType((prev) => ({
+                          ...prev,
+                          [st]: val ? val : undefined,
+                        }));
+                      }}
+                      className="w-full rounded-lg bg-[var(--bg-surface)] border border-[var(--border-subtle)] px-1.5 py-1 text-[11px] font-semibold text-[var(--text-primary)]"
+                    >
+                      <option value="">{t(`classMode.mode.${defaultMode}`)}</option>
+                      <option value="in_person">{t('classMode.mode.in_person')}</option>
+                      <option value="remote">{t('classMode.mode.remote')}</option>
+                      <option value="hybrid">{t('classMode.mode.hybrid')}</option>
+                    </select>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
           {errorMsg && (
             <p className="text-xs font-medium text-rose-500" role="alert">
               {errorMsg}
@@ -278,6 +340,11 @@ export const SubjectsView: React.FC<{
               <h2 className="text-lg font-bold text-[var(--text-primary)]">
                 {activeDetailSubject.name}
               </h2>
+              <SessionMetaBadges
+                mode={activeDetailSubject.defaultMode ?? 'in_person'}
+                showModeLabel
+                compact
+              />
             </div>
             <button
               type="button"
@@ -389,7 +456,7 @@ export const SubjectsView: React.FC<{
                           {subj.name}
                         </h3>
                         <p className="text-xs text-[var(--text-muted)] truncate">
-                          {subj.teacher} · {subj.room}
+                          {subj.teacher} {subj.room ? `· ${subj.room}` : ''}
                         </p>
                       </div>
                     </button>
@@ -428,8 +495,27 @@ export const SubjectsView: React.FC<{
                     </div>
                   </div>
 
-                  {/* Unboxed Metadata Line */}
-                  <div className="mt-4 flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+                  {/* Delivery Mode + Unboxed Metadata Line */}
+                  <div className="mt-3.5 flex flex-wrap items-center gap-2">
+                    <SessionMetaBadges
+                      mode={subj.defaultMode ?? 'in_person'}
+                      showModeLabel
+                      compact
+                    />
+                    {subj.modeByType &&
+                      Object.entries(subj.modeByType).map(([st, md]) =>
+                        md && md !== subj.defaultMode ? (
+                          <SessionMetaBadges
+                            key={st}
+                            type={st as SessionType}
+                            mode={md}
+                            compact
+                          />
+                        ) : null
+                      )}
+                  </div>
+
+                  <div className="mt-3 flex items-center gap-2 text-xs text-[var(--text-secondary)]">
                     <span>
                       {t('subjects.coefficient')}:{' '}
                       <strong className="font-mono-tabular text-[var(--text-primary)]">
