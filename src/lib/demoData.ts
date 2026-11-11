@@ -32,9 +32,11 @@ export function buildSeedDemoData(
   todayStr: string = getLocalDateString()
 ): DemoDataset {
   const todayDow = getWeekDayIndex(todayStr);
-  const tomorrowDow = ((todayDow + 1) % 7) as WeekDay;
-  const dayAfterDow = ((todayDow + 2) % 7) as WeekDay;
-  const prevDow = ((todayDow + 6) % 7) as WeekDay;
+  const nextIso = (dow: WeekDay, offset: number): WeekDay =>
+    ((((dow - 1 + offset) % 7) + 7) % 7 + 1) as WeekDay;
+  const tomorrowDow = nextIso(todayDow, 1);
+  const dayAfterDow = nextIso(todayDow, 2);
+  const prevDow = nextIso(todayDow, -1);
 
   const isAr = lang === 'ar';
   const isFr = lang === 'fr';
@@ -133,7 +135,7 @@ export function buildSeedDemoData(
     },
   ];
 
-  const timetable: TimetableSlot[] = [
+  const baseTimetable: TimetableSlot[] = [
     {
       id: 'slot-today-1',
       subjectId: 'subj-math',
@@ -250,6 +252,49 @@ export function buildSeedDemoData(
       recurrence: 'weekly',
     },
   ];
+
+  // Ensure Saturday (6), Sunday (7), Monday (1), Tuesday (2), Wednesday (3), and Thursday (4) all have classes
+  const coveredDays = new Set<WeekDay>(baseTimetable.map((s) => s.dayOfWeek));
+  const extraWeekdayTemplates: Array<{
+    day: WeekDay;
+    subjectIdx: number;
+    startTime: string;
+    endTime: string;
+    type: TimetableSlot['type'];
+    mode: TimetableSlot['mode'];
+  }> = [
+    { day: 6, subjectIdx: 0, startTime: '09:00', endTime: '10:30', type: 'lecture', mode: 'in_person' },
+    { day: 7, subjectIdx: 2, startTime: '10:00', endTime: '11:30', type: 'td', mode: 'in_person' },
+    { day: 1, subjectIdx: 1, startTime: '08:30', endTime: '10:00', type: 'lecture', mode: 'in_person' },
+    { day: 2, subjectIdx: 4, startTime: '11:00', endTime: '12:30', type: 'tp', mode: 'in_person' },
+    { day: 3, subjectIdx: 3, startTime: '14:00', endTime: '15:30', type: 'lecture', mode: 'remote' },
+    { day: 4, subjectIdx: 0, startTime: '10:30', endTime: '12:00', type: 'td', mode: 'in_person' },
+  ];
+
+  for (const tpl of extraWeekdayTemplates) {
+    if (!coveredDays.has(tpl.day)) {
+      const subj = subjects[tpl.subjectIdx] ?? subjects[0];
+      baseTimetable.push({
+        id: `slot-wk-${tpl.day}`,
+        subjectId: subj.id,
+        dayOfWeek: tpl.day,
+        startTime: tpl.startTime,
+        endTime: tpl.endTime,
+        type: tpl.type,
+        section: '1',
+        group: '1',
+        room: tpl.mode === 'remote' ? '' : subj.room,
+        teacher: subj.teacher,
+        mode: tpl.mode,
+        meetingUrl: tpl.mode === 'remote' ? 'https://meet.google.com/waq-sem-live' : undefined,
+        platform: tpl.mode === 'remote' ? 'meet' : undefined,
+        recurrence: 'weekly',
+      });
+      coveredDays.add(tpl.day);
+    }
+  }
+
+  const timetable: TimetableSlot[] = baseTimetable;
 
   const exams: Exam[] = [
     {
@@ -490,7 +535,7 @@ export function buildSeedDemoData(
       icon: 'Brain',
       color: 'honey',
       frequencyType: 'daily',
-      targetDays: [0, 1, 2, 3, 4, 5, 6],
+      targetDays: [1, 2, 3, 4, 5, 6, 7],
       timesPerWeek: 7,
       reminderTimes: ['19:00'],
       completedDates: last10Days,
@@ -507,7 +552,7 @@ export function buildSeedDemoData(
       icon: 'BookCheck',
       color: 'sage',
       frequencyType: 'daily',
-      targetDays: [0, 1, 2, 3, 4, 5, 6],
+      targetDays: [1, 2, 3, 4, 5, 6, 7],
       timesPerWeek: 7,
       reminderTimes: ['20:30'],
       completedDates: last6Days,
@@ -524,7 +569,7 @@ export function buildSeedDemoData(
       icon: 'Sparkles',
       color: 'slate',
       frequencyType: 'times_per_week',
-      targetDays: [0, 1, 2, 3, 4, 5, 6],
+      targetDays: [1, 2, 3, 4, 5, 6, 7],
       timesPerWeek: 5,
       reminderTimes: ['17:00'],
       completedDates: [
@@ -554,7 +599,7 @@ export function buildSeedDemoData(
       date: todayStr,
       time: '19:00',
       recurrence: 'daily',
-      daysOfWeek: [0, 1, 2, 3, 4, 5, 6],
+      daysOfWeek: [1, 2, 3, 4, 5, 6, 7],
       linkedType: 'habit',
       linkedId: 'hab-1',
       sound: 'soft_bell',

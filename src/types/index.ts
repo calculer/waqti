@@ -3,7 +3,13 @@ export type ThemeMode = 'light' | 'dark' | 'auto';
 export type AccentTheme = 'honey' | 'sand' | 'olive' | 'terracotta' | 'slate';
 export type DigitsStyle = 'western' | 'arabic-indic';
 export type TimeFormat = '24h' | '12h';
-export type WeekDay = 0 | 1 | 2 | 3 | 4 | 5 | 6; // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+
+/**
+ * Canonical ISO-8601 weekday numbering:
+ * 1 = Monday, 2 = Tuesday, 3 = Wednesday, 4 = Thursday, 5 = Friday, 6 = Saturday, 7 = Sunday.
+ */
+export type IsoWeekday = 1 | 2 | 3 | 4 | 5 | 6 | 7;
+export type WeekDay = IsoWeekday;
 
 export type SubjectColorId =
   | 'honey'
@@ -45,7 +51,7 @@ export type RecurrenceType = 'weekly' | 'biweekly' | 'custom';
 export interface TimetableSlot {
   id: string;
   subjectId: string;
-  dayOfWeek: WeekDay;
+  dayOfWeek: WeekDay; // Canonical ISO 1..7 (Monday=1 .. Sunday=7)
   startTime: string; // "HH:mm"
   endTime: string; // "HH:mm"
   type?: SessionType;
@@ -167,7 +173,7 @@ export interface Habit {
   icon: string;
   color: SubjectColorId;
   frequencyType: HabitFrequencyType;
-  targetDays: WeekDay[];
+  targetDays: WeekDay[]; // Canonical ISO 1..7
   timesPerWeek: number;
   reminderTimes?: string[]; // ["08:00", "20:00"]
   completedDates: string[]; // "YYYY-MM-DD"
@@ -186,7 +192,7 @@ export interface AlarmReminder {
   date: string; // "YYYY-MM-DD" for 'once' or anchor date
   time: string; // "HH:mm"
   recurrence: AlarmRecurrence;
-  daysOfWeek: WeekDay[]; // used when recurrence === 'weekdays'
+  daysOfWeek: WeekDay[]; // Canonical ISO 1..7 used when recurrence === 'weekdays'
   linkedType: AlarmLinkedType;
   linkedId?: string;
   mode?: DeliveryMode;
@@ -274,8 +280,8 @@ export interface UserSettings {
   language: Language;
   theme: ThemeMode;
   accent: AccentTheme;
-  weekStart: WeekDay;
-  weekendDays: WeekDay[];
+  weekStart: WeekDay; // Canonical ISO 1..7 (e.g. 6=Saturday, 1=Monday, 7=Sunday)
+  weekendDays: WeekDay[]; // Canonical ISO 1..7 (e.g. [5, 6] or [6, 7])
   timeFormat: TimeFormat;
   timezone: string;
   digitsStyle: DigitsStyle;
@@ -313,6 +319,31 @@ export type NavSection =
   | 'habits'
   | 'stats'
   | 'settings';
+
+export type ToastVariant = 'success' | 'info' | 'warning' | 'error';
+
+export interface ToastItem {
+  id: string;
+  message: string;
+  variant: ToastVariant;
+  durationMs: number; // 5000ms default, 8000ms for errors
+  createdAtMs: number;
+  remainingMs: number;
+  lastResumedAtMs: number;
+  paused: boolean;
+  undoLabel?: string;
+  undoAction?: () => void;
+  onUndo?: () => void;
+  actionLabel?: string;
+  onAction?: () => void;
+}
+
+export interface UndoableAction {
+  id: string;
+  label: string;
+  createdAtMs: number;
+  restore: () => void;
+}
 
 export interface UndoEntry {
   id: string;

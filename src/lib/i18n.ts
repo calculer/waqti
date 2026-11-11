@@ -47,14 +47,14 @@ export function getDirection(lang: Language): 'ltr' | 'rtl' {
 }
 
 export function getDefaultWeekStart(lang: Language): WeekDay {
-  if (lang === 'ar') return 6; // Saturday
-  if (lang === 'fr') return 1; // Monday
-  return 0; // Sunday
+  if (lang === 'ar') return 6; // Saturday (ISO 6)
+  if (lang === 'fr') return 1; // Monday (ISO 1)
+  return 7; // Sunday (ISO 7)
 }
 
 export function getDefaultWeekendDays(lang: Language): WeekDay[] {
-  if (lang === 'ar') return [5, 6]; // Friday, Saturday
-  return [0, 6]; // Sunday, Saturday
+  if (lang === 'ar') return [5, 6]; // Friday (5), Saturday (6)
+  return [6, 7]; // Saturday (6), Sunday (7)
 }
 
 export function formatDigits(

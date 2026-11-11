@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   BarChart3,
   Bell,
@@ -16,7 +16,6 @@ import {
   Settings,
   Sun,
   Timer,
-  Undo2,
 } from 'lucide-react';
 import { useWaqtiStore } from './store/useWaqtiStore';
 import { useTranslation } from './hooks/useTranslation';
@@ -27,6 +26,14 @@ import { QuickAddModal, type QuickAddTab } from './components/QuickAddModal';
 import { OnboardingModal } from './components/OnboardingModal';
 import { AlarmRingingModal } from './components/AlarmRingingModal';
 import { SmartPasteModal } from './components/SmartPasteModal';
+import { ToastContainer } from './components/ToastContainer';
+import {
+  createToastItem,
+  pauseToast,
+  pushToastToStack,
+  resumeToast,
+  UNDO_SHORTCUT_WINDOW_MS,
+} from './lib/toastTimer';
 import { DashboardView } from './features/DashboardView';
 import { SubjectsView } from './features/SubjectsView';
 import { TimetableView } from './features/TimetableView';
@@ -38,7 +45,7 @@ import { FocusView } from './features/FocusView';
 import { HabitsView } from './features/HabitsView';
 import { StatsView } from './features/StatsView';
 import { SettingsView } from './features/SettingsView';
-import type { Language, NavSection, UndoEntry } from './types';
+import type { Language, NavSection, ToastItem, UndoableAction } from './types';
 
 export default function App() {
   const { t, lang, dir, digits } = useTranslation();
@@ -55,6 +62,7 @@ export default function App() {
   const evaluateDueAlarms = useWaqtiStore((s) => s.evaluateDueAlarms);
   const restoreSnapshot = useWaqtiStore((s) => s.restoreSnapshot);
   const clearRecentlyImportedSlots = useWaqtiStore((s) => s.clearRecentlyImportedSlots);
+  const batchImportTimetable = useWaqtiStore((s) => s.batchImportTimetable);
 
   const [isCommandOpen, setIsCommandOpen] = useState(false);
   const [quickAddState, setQuickAddState] = useState<{
@@ -64,10 +72,37 @@ export default function App() {
   }>({ open: false, tab: 'task' });
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
   const [isNotifOpen, setIsNotifOpen] = useState(false);
-  const [undoEntry, setUndoEntry] = useState<(UndoEntry & { customLabel?: string }) | null>(
-    null
-  );
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const [lastUndoable, setLastUndoable] = useState<UndoableAction | null>(null);
   const [quickCaptureTrigger, setQuickCaptureTrigger] = useState(0);
+
+  const pushToast = useCallback(
+    (input: Parameters<typeof createToastItem>[0]) => {
+      const item = createToastItem(input);
+      if (item.onUndo) {
+        setLastUndoable({
+          id: item.id,
+          label: item.message,
+          createdAtMs: item.createdAtMs,
+          restore: item.onUndo,
+        });
+      }
+      setToasts((prev) => pushToastToStack(prev, item));
+    },
+    []
+  );
+
+  const dismissToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((item) => item.id !== id));
+  }, []);
+
+  const handlePauseToast = useCallback((id: string, nowMs: number) => {
+    setToasts((prev) => prev.map((item) => (item.id === id ? pauseToast(item, nowMs) : item)));
+  }, []);
+
+  const handleResumeToast = useCallback((id: string, nowMs: number) => {
+    setToasts((prev) => prev.map((item) => (item.id === id ? resumeToast(item, nowMs) : item)));
+  }, []);
 
   // Sync <html lang dir class data-accent> and meta theme-color dynamically
   useEffect(() => {
@@ -87,7 +122,7 @@ export default function App() {
     }
   }, [lang, dir, settings.theme, settings.accent]);
 
-  // Refresh date at midnight / when tab regains focus, evaluate alarms every second, and wire Ctrl/Cmd+K & 'N' shortcuts
+  // Refresh date at midnight / when tab regains focus, evaluate alarms every second, and wire Ctrl/Cmd+K, Ctrl/Cmd+Z & 'N' shortcuts
   useEffect(() => {
     evaluateDueAlarms();
     const alarmTimer = window.setInterval(() => {
@@ -110,7 +145,6 @@ export default function App() {
         setIsCommandOpen((v) => !v);
         return;
       }
-      // Single-key 'N' shortcut to focus Quick Capture when not typing in an input/textarea/select
       const target = e.target as HTMLElement | null;
       const isEditable =
         target &&
@@ -118,6 +152,24 @@ export default function App() {
           target.tagName === 'TEXTAREA' ||
           target.tagName === 'SELECT' ||
           target.isContentEditable);
+
+      // Ctrl/Cmd+Z triggers undo within 60s window after last destructive/import action
+      if (
+        !isEditable &&
+        (e.metaKey || e.ctrlKey) &&
+        !e.shiftKey &&
+        e.key.toLowerCase() === 'z' &&
+        lastUndoable &&
+        Date.now() - lastUndoable.createdAtMs <= UNDO_SHORTCUT_WINDOW_MS
+      ) {
+        e.preventDefault();
+        lastUndoable.restore();
+        setLastUndoable(null);
+        setToasts((prev) => prev.filter((item) => item.id !== lastUndoable.id));
+        return;
+      }
+
+      // Single-key 'N' shortcut to focus Quick Capture when not typing in an input/textarea/select
       if (!isEditable && !e.metaKey && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'n') {
         e.preventDefault();
         setActiveNav('dashboard');
@@ -134,15 +186,19 @@ export default function App() {
       window.removeEventListener('focus', handleFocus);
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [refreshTodayIfNeeded, evaluateDueAlarms, setActiveNav]);
+  }, [refreshTodayIfNeeded, evaluateDueAlarms, setActiveNav, lastUndoable]);
 
-  const handlePushUndo = (
-    labelKey: string,
-    restore: () => void,
-    customLabel?: string
-  ) => {
-    setUndoEntry({ id: String(Date.now()), labelKey, restore, customLabel });
-  };
+  const handlePushUndo = useCallback(
+    (labelKey: string, restore: () => void, customLabel?: string) => {
+      const msg = customLabel || t(labelKey as Parameters<typeof t>[0]);
+      pushToast({
+        message: msg,
+        variant: 'info',
+        onUndo: restore,
+      });
+    },
+    [pushToast, t]
+  );
 
   const enabledAlarmsCount = alarms.filter((a) => a.enabled).length;
 
@@ -476,41 +532,86 @@ export default function App() {
         </button>
       </nav>
 
-      {/* Undo Deletion / Import Toast */}
-      {undoEntry && (
-        <div className="fixed bottom-20 md:bottom-6 end-6 z-50 flex items-center gap-3 rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-surface)] px-4 py-3 text-xs shadow-2xl">
-          <span className="font-medium text-[var(--text-primary)]">
-            {undoEntry.customLabel || t(undoEntry.labelKey as Parameters<typeof t>[0])}
-          </span>
-          <button
-            type="button"
-            onClick={() => {
-              undoEntry.restore();
-              setUndoEntry(null);
-            }}
-            className="flex items-center gap-1 rounded-lg bg-[var(--accent-soft)] px-2.5 py-1 font-semibold text-[var(--accent-strong)]"
-          >
-            <Undo2 className="h-3.5 w-3.5" />
-            <span>{t('common.undo')}</span>
-          </button>
-        </div>
-      )}
+      {/* Auto-Dismissing Toast Stack */}
+      <ToastContainer
+        toasts={toasts}
+        onDismiss={dismissToast}
+        onPause={handlePauseToast}
+        onResume={handleResumeToast}
+      />
 
       <OfflineIndicator />
 
       <AlarmRingingModal />
 
       <SmartPasteModal
-        onImported={({ count, snapshotId }) => {
+        onImported={({ count, skippedDuplicatesCount, snapshotId, rows }) => {
           setActiveNav('timetable');
-          handlePushUndo(
-            'common.deletedToast',
-            () => {
-              restoreSnapshot(snapshotId);
-              clearRecentlyImportedSlots();
-            },
-            t('smartPaste.importedToast', { count: digits(count) })
-          );
+          if (count === 0) {
+            // Never show a success toast with Undo when nothing changed
+            const msg =
+              skippedDuplicatesCount > 0
+                ? t('smartPaste.zeroAddedDuplicatesSkipped', {
+                    skipped: digits(skippedDuplicatesCount),
+                  })
+                : t('smartPaste.importedToast', { count: digits(0) });
+            pushToast({
+              message: msg,
+              variant: 'warning',
+              nothingChanged: true,
+              importedCount: 0,
+              actionLabel:
+                skippedDuplicatesCount > 0 ? t('smartPaste.addAnyway') : undefined,
+              onAction:
+                skippedDuplicatesCount > 0
+                  ? () => {
+                      const forceRes = batchImportTimetable({
+                        rows,
+                        importMode: 'add',
+                        duplicateHandling: 'keep',
+                      });
+                      if (forceRes.importedCount > 0 && forceRes.snapshotId) {
+                        const snapId = forceRes.snapshotId;
+                        pushToast({
+                          message: t('smartPaste.importedToast', {
+                            count: digits(forceRes.importedCount),
+                          }),
+                          variant: 'success',
+                          importedCount: forceRes.importedCount,
+                          onUndo: () => {
+                            restoreSnapshot(snapId);
+                            clearRecentlyImportedSlots();
+                          },
+                        });
+                        window.setTimeout(() => {
+                          clearRecentlyImportedSlots();
+                        }, 5000);
+                      }
+                    }
+                  : undefined,
+            });
+            return;
+          }
+
+          const message =
+            skippedDuplicatesCount > 0
+              ? t('smartPaste.importedWithSkippedToast', {
+                  count: digits(count),
+                  skipped: digits(skippedDuplicatesCount),
+                })
+              : t('smartPaste.importedToast', { count: digits(count) });
+
+          pushToast({
+            message,
+            variant: 'success',
+            importedCount: count,
+            onUndo: snapshotId
+              ? () => {
+                  restoreSnapshot(snapshotId);
+                  clearRecentlyImportedSlots();
+                }
+              : undefined,
+          });
           window.setTimeout(() => {
             clearRecentlyImportedSlots();
           }, 5000);
@@ -521,6 +622,18 @@ export default function App() {
         isOpen={isCommandOpen}
         onClose={() => setIsCommandOpen(false)}
         onOpenQuickAdd={(tab = 'task') => setQuickAddState({ open: true, tab })}
+        lastUndoAction={
+          lastUndoable
+            ? {
+                label: lastUndoable.label,
+                onUndo: () => {
+                  lastUndoable.restore();
+                  setLastUndoable(null);
+                  setToasts((prev) => prev.filter((item) => item.id !== lastUndoable.id));
+                },
+              }
+            : null
+        }
       />
 
       <QuickAddModal

@@ -1,29 +1,107 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   formatDigits,
   formatPlural,
   formatTimeRange,
   getDefaultWeekStart,
   getDirection,
+  t,
   validateTranslationKeys,
 } from './i18n';
 import { formatLocalizedDate } from './dates';
 
 test('validateTranslationKeys ensures ar, fr, and en have 100% identical keys', () => {
   const result = validateTranslationKeys();
-  assert.equal(result.valid, true);
+  assert.equal(result.valid, true, `Missing keys: ${result.missing.join(', ')}`);
   assert.equal(result.missing.length, 0);
 });
 
-test('getDirection and getDefaultWeekStart return correct values per locale', () => {
+test('all static t(...) keys used in src/ exist in ar, fr, and en and never render a raw key matching /^[a-z]+(\\.[A-Za-z0-9_]+)+$/', () => {
+  const rawKeyRegex = /^[a-z]+(\.[A-Za-z0-9_]+)+$/;
+  const filesToScan: string[] = [];
+
+  const walk = (dir: string) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+      } else if (
+        (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) &&
+        !entry.name.endsWith('.test.ts')
+      ) {
+        filesToScan.push(full);
+      }
+    }
+  };
+  walk('src');
+
+  const keyCallRegex = /\bt\(\s*(?:lang\s*,\s*)?['"]([a-zA-Z0-9_.]+)['"]/g;
+  const discoveredKeys = new Set<string>();
+
+  for (const file of filesToScan) {
+    const code = fs.readFileSync(file, 'utf8');
+    let match: RegExpExecArray | null;
+    while ((match = keyCallRegex.exec(code)) !== null) {
+      discoveredKeys.add(match[1]);
+    }
+  }
+
+  // Also include dynamic keys used via template literals
+  const dynamicFamilies = [
+    'classMode.inPerson',
+    'classMode.remote',
+    'classMode.hybrid',
+    'classMode.filterAll',
+    'timetable.mode.in_person',
+    'timetable.mode.remote',
+    'timetable.mode.hybrid',
+    'timetable.type.lecture',
+    'timetable.type.td',
+    'timetable.type.tp',
+    'timetable.type.other',
+    'timetable.type.unknown',
+    'settings.accent.honey',
+    'settings.accent.sand',
+    'settings.accent.olive',
+    'settings.accent.terracotta',
+    'settings.accent.slate',
+    'smartPaste.issue.unknown_day',
+    'smartPaste.issue.missing_end_time',
+    'smartPaste.issue.invalid_time_order',
+    'smartPaste.issue.missing_subject',
+    'smartPaste.issue.unknown_type',
+    'smartPaste.issue.invalid_url',
+    'smartPaste.issue.duplicate_existing',
+    'smartPaste.issue.conflict_existing',
+    'smartPaste.issue.conflict_batch',
+  ];
+  for (const k of dynamicFamilies) {
+    discoveredKeys.add(k);
+  }
+
+  for (const key of discoveredKeys) {
+    for (const lang of ['ar', 'fr', 'en'] as const) {
+      const rendered = t(lang, key);
+      assert.equal(
+        rawKeyRegex.test(rendered),
+        false,
+        `Locale "${lang}" rendered raw key "${rendered}" for key "${key}"`
+      );
+    }
+  }
+});
+
+test('getDirection and getDefaultWeekStart return correct canonical ISO values per locale', () => {
   assert.equal(getDirection('ar'), 'rtl');
   assert.equal(getDirection('fr'), 'ltr');
   assert.equal(getDirection('en'), 'ltr');
 
-  assert.equal(getDefaultWeekStart('ar'), 6); // Saturday
-  assert.equal(getDefaultWeekStart('fr'), 1); // Monday
-  assert.equal(getDefaultWeekStart('en'), 0); // Sunday
+  assert.equal(getDefaultWeekStart('ar'), 6); // Saturday (ISO 6)
+  assert.equal(getDefaultWeekStart('fr'), 1); // Monday (ISO 1)
+  assert.equal(getDefaultWeekStart('en'), 7); // Sunday (ISO 7)
 });
 
 test('formatPlural handles Arabic 6 plural categories and French/English plurals including alarms', () => {

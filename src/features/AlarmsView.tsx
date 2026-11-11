@@ -120,7 +120,7 @@ export const AlarmsView: React.FC<{
       daysOfWeek:
         recurrence === 'weekdays' || recurrence === 'weekly'
           ? daysOfWeek
-          : [0, 1, 2, 3, 4, 5, 6],
+          : [1, 2, 3, 4, 5, 6, 7],
       linkedType,
       linkedId: linkedId || undefined,
       sound,

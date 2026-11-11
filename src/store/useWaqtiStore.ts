@@ -22,6 +22,7 @@ import type {
   SubjectColorId,
   TimetableSlot,
   UserSettings,
+  WeekDay,
 } from '../types';
 import {
   calculateHabitStreak,
@@ -31,8 +32,10 @@ import {
   generateRevisionPlanForExam,
   getLocalDateString,
   getLocalTimeString,
+  getOccurrencesForDate,
   getWeekDayIndex,
   isAlarmDueNow,
+  registerDefaultOccurrenceSource,
   shiftDateString,
 } from '../lib/dates';
 import {
@@ -40,12 +43,13 @@ import {
   getDefaultWeekendDays,
   getDefaultWeekStart,
 } from '../lib/i18n';
+import { toIsoWeekday } from '../lib/weekdays';
 import { buildSeedDemoData } from '../lib/demoData';
 import { SUBJECT_COLORS } from '../lib/colors';
 import type { ParsedTimetableRow } from '../lib/timetableParser';
 import { fuzzyMatchSubject } from '../lib/timetableParser';
 
-export const STORAGE_SCHEMA_VERSION = 4;
+export const STORAGE_SCHEMA_VERSION = 5;
 
 export interface SmartPasteInitialPayload {
   plainText?: string;
@@ -112,7 +116,12 @@ export interface WaqtiState {
     rows: ParsedTimetableRow[];
     importMode: 'add' | 'replace';
     duplicateHandling: 'skip' | 'replace' | 'keep';
-  }) => { importedCount: number; createdSubjectsCount: number; snapshotId: string };
+  }) => {
+    importedCount: number;
+    skippedDuplicatesCount: number;
+    createdSubjectsCount: number;
+    snapshotId: string | null;
+  };
 
   // Exams & Revision CRUD
   addExam: (exam: Omit<Exam, 'id'>) => string;
@@ -238,10 +247,28 @@ export function migrateWaqtiState(persistedState: unknown, _version: number): Pa
       ? (raw.settings as Record<string, unknown>)
       : {};
 
+  const rawTz =
+    typeof rawSettings.timezone === 'string' && rawSettings.timezone.trim()
+      ? rawSettings.timezone.trim()
+      : initialTz;
+  const migratedTz = rawTz === 'UTC' ? initialTz : rawTz;
+
+  const migratedWeekStart =
+    typeof rawSettings.weekStart === 'number'
+      ? toIsoWeekday(rawSettings.weekStart)
+      : defaultSettings.weekStart;
+
+  const migratedWeekendDays = Array.isArray(rawSettings.weekendDays)
+    ? Array.from(new Set(rawSettings.weekendDays.map((d) => toIsoWeekday(Number(d)))))
+    : defaultSettings.weekendDays;
+
   const settings: UserSettings = {
     ...defaultSettings,
     ...(rawSettings as Partial<UserSettings>),
     accent: normalizeAccent(rawSettings.accent),
+    timezone: migratedTz,
+    weekStart: migratedWeekStart,
+    weekendDays: migratedWeekendDays,
     defaultClassDurationMinutes:
       typeof rawSettings.defaultClassDurationMinutes === 'number'
         ? rawSettings.defaultClassDurationMinutes
@@ -264,20 +291,38 @@ export function migrateWaqtiState(persistedState: unknown, _version: number): Pa
       }))
     : initialDemo.subjects;
 
-  const rawTimetable = Array.isArray(raw.timetable)
+  let rawTimetable = Array.isArray(raw.timetable)
     ? (raw.timetable as TimetableSlot[]).map((sl) => ({
         ...sl,
+        dayOfWeek: toIsoWeekday(sl.dayOfWeek),
         type: sl.type ?? 'lecture',
         mode: sl.mode ?? 'in_person',
       }))
     : initialDemo.timetable;
 
+  // If still on demo data, ensure the refreshed multi-weekday demo timetable is available
+  if (settings.isDemoData && rawTimetable.length <= 8) {
+    rawTimetable = buildSeedDemoData(settings.language, initialToday).timetable;
+  }
+
   const rawHabits = Array.isArray(raw.habits)
     ? (raw.habits as Habit[]).map((h) => ({
         ...h,
         color: normalizeColor(h.color),
+        targetDays: Array.isArray(h.targetDays)
+          ? Array.from(new Set(h.targetDays.map((d) => toIsoWeekday(Number(d)))))
+          : ([1, 2, 3, 4, 5, 6, 7] as WeekDay[]),
       }))
     : initialDemo.habits;
+
+  const rawAlarms = Array.isArray(raw.alarms)
+    ? (raw.alarms as AlarmReminder[]).map((a) => ({
+        ...a,
+        daysOfWeek: Array.isArray(a.daysOfWeek)
+          ? Array.from(new Set(a.daysOfWeek.map((d) => toIsoWeekday(Number(d)))))
+          : [],
+      }))
+    : initialDemo.alarms;
 
   return {
     ...raw,
@@ -295,7 +340,7 @@ export function migrateWaqtiState(persistedState: unknown, _version: number): Pa
     focusSessions: Array.isArray(raw.focusSessions)
       ? raw.focusSessions
       : initialDemo.focusSessions,
-    alarms: Array.isArray(raw.alarms) ? raw.alarms : initialDemo.alarms,
+    alarms: rawAlarms,
     flashcards: Array.isArray(raw.flashcards) ? raw.flashcards : initialDemo.flashcards,
     dayPlan: Array.isArray(raw.dayPlan) ? raw.dayPlan : [],
     moodCheckIns: Array.isArray(raw.moodCheckIns) ? raw.moodCheckIns : [],
@@ -527,7 +572,10 @@ export const useWaqtiStore = create<WaqtiState>()(
       addTimetableSlot: (slot) => {
         const id = `slot-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
         set((state) => ({
-          timetable: [...state.timetable, { ...slot, id }],
+          timetable: [
+            ...state.timetable,
+            { ...slot, dayOfWeek: toIsoWeekday(slot.dayOfWeek), id },
+          ],
           settings: { ...state.settings, isDemoData: false },
         }));
         return id;
@@ -535,7 +583,18 @@ export const useWaqtiStore = create<WaqtiState>()(
 
       updateTimetableSlot: (id, partial) =>
         set((state) => ({
-          timetable: state.timetable.map((sl) => (sl.id === id ? { ...sl, ...partial } : sl)),
+          timetable: state.timetable.map((sl) =>
+            sl.id === id
+              ? {
+                  ...sl,
+                  ...partial,
+                  dayOfWeek:
+                    partial.dayOfWeek !== undefined
+                      ? toIsoWeekday(partial.dayOfWeek)
+                      : sl.dayOfWeek,
+                }
+              : sl
+          ),
         })),
 
       deleteTimetableSlot: (id) => {
@@ -549,11 +608,15 @@ export const useWaqtiStore = create<WaqtiState>()(
 
       duplicateDaySlots: (fromDay, toDay) =>
         set((state) => {
-          const sourceSlots = state.timetable.filter((s) => s.dayOfWeek === fromDay);
+          const canonFrom = toIsoWeekday(fromDay);
+          const canonTo = toIsoWeekday(toDay);
+          const sourceSlots = state.timetable.filter(
+            (s) => toIsoWeekday(s.dayOfWeek) === canonFrom
+          );
           const cloned: TimetableSlot[] = sourceSlots.map((s, idx) => ({
             ...s,
             id: `slot-dup-${Date.now()}-${idx}`,
-            dayOfWeek: toDay as TimetableSlot['dayOfWeek'],
+            dayOfWeek: canonTo,
           }));
           return {
             timetable: [...state.timetable, ...cloned],
@@ -562,31 +625,48 @@ export const useWaqtiStore = create<WaqtiState>()(
 
       batchImportTimetable: ({ rows, importMode, duplicateHandling }) => {
         const state = get();
-        // Always save an automatic backup snapshot before importing
-        state.createSnapshot(
-          importMode === 'replace'
-            ? 'Pre-Smart Paste Replace Backup'
-            : 'Pre-Smart Paste Import Backup'
-        );
-        const latestSnapshotId = get().snapshots[0]?.id ?? '';
-
         const includedRows = rows.filter((r) => r.include && r.dayOfWeek !== null);
         const nextSubjects = [...state.subjects];
         let nextTimetable = importMode === 'replace' ? [] : [...state.timetable];
         const importedSlotIds: string[] = [];
+        let skippedDuplicatesCount = 0;
         let createdSubjectsCount = 0;
 
         for (let i = 0; i < includedRows.length; i++) {
           const r = includedRows[i];
           if (r.dayOfWeek === null) continue;
+          const canonDay = toIsoWeekday(r.dayOfWeek);
+          const resolvedType = r.sessionType === 'unknown' ? 'lecture' : r.sessionType;
+          const normGroup = (r.group || '').trim().toUpperCase();
 
-          // Handle duplicates if adding to existing timetable
-          if (importMode === 'add' && r.duplicateOfSlotId) {
+          // Check against existing or already-queued slots in this import batch
+          const matchingExistingSlot =
+            importMode === 'add'
+              ? nextTimetable.find((sl) => {
+                  if (r.duplicateOfSlotId && sl.id === r.duplicateOfSlotId) return true;
+                  if (toIsoWeekday(sl.dayOfWeek) !== canonDay) return false;
+                  if (sl.startTime !== r.startTime || sl.endTime !== r.endTime) return false;
+                  if ((sl.type || 'lecture') !== resolvedType) return false;
+                  if ((sl.group || '').trim().toUpperCase() !== normGroup) return false;
+                  const subj = nextSubjects.find((s) => s.id === sl.subjectId);
+                  if (r.matchedSubjectId && sl.subjectId === r.matchedSubjectId) return true;
+                  if (
+                    subj &&
+                    subj.name.trim().toLowerCase() === r.subjectName.trim().toLowerCase()
+                  ) {
+                    return true;
+                  }
+                  return false;
+                })
+              : undefined;
+
+          if (importMode === 'add' && matchingExistingSlot) {
             if (duplicateHandling === 'skip') {
+              skippedDuplicatesCount++;
               continue;
             }
             if (duplicateHandling === 'replace') {
-              nextTimetable = nextTimetable.filter((sl) => sl.id !== r.duplicateOfSlotId);
+              nextTimetable = nextTimetable.filter((sl) => sl.id !== matchingExistingSlot.id);
             }
           }
 
@@ -621,10 +701,10 @@ export const useWaqtiStore = create<WaqtiState>()(
           const newSlot: TimetableSlot = {
             id: newSlotId,
             subjectId,
-            dayOfWeek: r.dayOfWeek,
+            dayOfWeek: canonDay,
             startTime: r.startTime,
             endTime: r.endTime,
-            type: r.sessionType === 'unknown' ? 'lecture' : r.sessionType,
+            type: resolvedType,
             section: r.section || undefined,
             group: r.group || undefined,
             room: r.room || '',
@@ -642,6 +722,24 @@ export const useWaqtiStore = create<WaqtiState>()(
           importedSlotIds.push(newSlotId);
         }
 
+        const didMutate = importedSlotIds.length > 0 || importMode === 'replace';
+        if (!didMutate) {
+          return {
+            importedCount: 0,
+            skippedDuplicatesCount,
+            createdSubjectsCount: 0,
+            snapshotId: null,
+          };
+        }
+
+        // Only save an automatic backup snapshot when state actually changes
+        state.createSnapshot(
+          importMode === 'replace'
+            ? 'Pre-Smart Paste Replace Backup'
+            : 'Pre-Smart Paste Import Backup'
+        );
+        const latestSnapshotId = get().snapshots[0]?.id ?? null;
+
         set({
           subjects: nextSubjects,
           timetable: nextTimetable,
@@ -656,6 +754,7 @@ export const useWaqtiStore = create<WaqtiState>()(
 
         return {
           importedCount: importedSlotIds.length,
+          skippedDuplicatesCount,
           createdSubjectsCount,
           snapshotId: latestSnapshotId,
         };
@@ -1048,9 +1147,10 @@ export const useWaqtiStore = create<WaqtiState>()(
       generateSmartDayPlan: (shuffleOffset = 0) =>
         set((state) => {
           const todayDow = getWeekDayIndex(state.todayStr);
-          const todaySlots = state.timetable
-            .filter((s) => s.dayOfWeek === todayDow)
-            .sort((a, b) => a.startTime.localeCompare(b.startTime));
+          const todaySlots = getOccurrencesForDate(state.todayStr, {
+            timetable: state.timetable,
+            subjects: state.subjects,
+          }).classes.map((c) => c.slot);
 
           const blocks: DayPlanBlock[] = todaySlots.map((sl) => {
             const subj = state.subjects.find((s) => s.id === sl.subjectId);
@@ -1339,3 +1439,6 @@ export const useWaqtiStore = create<WaqtiState>()(
     }
   )
 );
+
+registerDefaultOccurrenceSource(() => useWaqtiStore.getState());
+

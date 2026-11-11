@@ -21,11 +21,11 @@ import { useTranslation } from '../hooks/useTranslation';
 import {
   calculateHabitStreak,
   computeExamCountdown,
+  formatGmtOffsetForDate,
   formatHijriDate,
   formatLocalizedDate,
   getLocalTimeString,
-  getWeekDayIndex,
-  isSlotActiveOnDate,
+  getOccurrencesForDate,
   parseQuickCaptureInput,
   timeToMinutes,
 } from '../lib/dates';
@@ -104,17 +104,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     return 'greeting.night';
   }, [currentHHmm]);
 
-  const todayDow = getWeekDayIndex(todayStr);
-
   const todaySlots = useMemo(() => {
-    return timetable
-      .filter(
-        (s) =>
-          s.dayOfWeek === todayDow &&
-          isSlotActiveOnDate(s, todayStr, settings.weekStart)
-      )
-      .sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
-  }, [timetable, todayDow, todayStr, settings.weekStart]);
+    return getOccurrencesForDate(todayStr, { timetable, subjects }).classes;
+  }, [timetable, subjects, todayStr]);
 
   const nextClassSlot = useMemo(() => {
     return (
@@ -318,7 +310,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </span>
               </div>
               <div className="text-[11px] text-[var(--text-muted)] font-mono-tabular">
-                {settings.timezone}
+                {settings.timezone} · {formatGmtOffsetForDate(todayStr, settings.timezone)}
               </div>
             </div>
           </div>

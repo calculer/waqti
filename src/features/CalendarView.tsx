@@ -14,16 +14,15 @@ import {
 import { useWaqtiStore } from '../store/useWaqtiStore';
 import { useTranslation } from '../hooks/useTranslation';
 import {
-  computeExamCountdown,
-  doesAlarmMatchDate,
+  formatGmtOffsetForDate,
   formatHijriDate,
   formatLocalizedDate,
   getLocalTimeString,
   getMonthCalendarGrid,
+  getOccurrencesForDate,
   getOrderedWeekdays,
   getWeekDates,
   getWeekDayIndex,
-  isSlotActiveOnDate,
   packOverlappingEvents,
   shiftDateString,
   shiftMonthString,
@@ -106,119 +105,32 @@ export const CalendarView: React.FC<{
 
   const currentMonthPrefix = cursorDate.slice(0, 7);
 
-  // Build unified event list for any given YYYY-MM-DD date respecting active filters
+  // Single source of truth via getOccurrencesForDate for all views (Month, Week, Day, Agenda, Side Panel)
+  const getOccurrencesBundleForDate = (dateStr: string) =>
+    getOccurrencesForDate(dateStr, {
+      timetable,
+      subjects,
+      exams,
+      tasks,
+      habits,
+      alarms,
+      filters,
+      filterSessionType,
+      filterDeliveryMode,
+      includeAllEvents: true,
+      lang,
+      timeFormat,
+      digitsStyle,
+    });
+
   const getEventsForDate = (dateStr: string): CalendarEventItem[] => {
-    const dow = getWeekDayIndex(dateStr);
-    const items: CalendarEventItem[] = [];
-
-    if (filters.exams) {
-      for (const ex of exams) {
-        if (ex.date === dateStr) {
-          const subj = subjects.find((s) => s.id === ex.subjectId);
-          const endMins = timeToMinutes(ex.startTime) + (ex.durationMinutes || 90);
-          const endH = String(Math.min(23, Math.floor(endMins / 60))).padStart(2, '0');
-          const endM = String(endMins % 60).padStart(2, '0');
-          const cd = computeExamCountdown(
-            ex.date,
-            ex.startTime,
-            new Date(),
-            lang,
-            timeFormat,
-            digitsStyle
-          );
-          items.push({
-            id: `exam-${ex.id}`,
-            kind: 'exam',
-            title: ex.title,
-            startTime: ex.startTime,
-            endTime: `${endH}:${endM}`,
-            subjectId: ex.subjectId,
-            colorId: subj?.color ?? 'terracotta',
-            room: ex.room,
-            countdownLabel: cd.label,
-            deliveryMode: ex.mode ?? 'in_person',
-            meetingUrl: ex.meetingUrl,
-            platform: ex.platform,
-          });
-        }
-      }
-    }
-
-    if (filters.classes) {
-      for (const sl of timetable) {
-        if (
-          sl.dayOfWeek === dow &&
-          isSlotActiveOnDate(sl, dateStr, settings.weekStart)
-        ) {
-          const slType = sl.type ?? 'lecture';
-          const slMode = sl.mode ?? 'in_person';
-          if (filterSessionType !== 'all' && slType !== filterSessionType) continue;
-          if (filterDeliveryMode !== 'all' && slMode !== filterDeliveryMode) continue;
-
-          const subj = subjects.find((s) => s.id === sl.subjectId);
-          items.push({
-            id: `class-${sl.id}-${dateStr}`,
-            kind: 'class',
-            title: subj?.name ?? 'Class',
-            startTime: sl.startTime,
-            endTime: sl.endTime,
-            subjectId: sl.subjectId,
-            colorId: sl.customColor ?? subj?.color ?? 'honey',
-            room: sl.room,
-            sessionType: slType,
-            deliveryMode: slMode,
-            section: sl.section,
-            group: sl.group,
-            meetingUrl: sl.meetingUrl,
-            platform: sl.platform,
-          });
-        }
-      }
-    }
-
-    if (filters.tasks) {
-      for (const tk of tasks) {
-        if (tk.dueDate === dateStr) {
-          const subj = subjects.find((s) => s.id === tk.subjectId);
-          const startMins = timeToMinutes(tk.dueTime || '18:00');
-          const endMins = Math.min(23 * 60 + 59, startMins + 45);
-          const endT = `${String(Math.floor(endMins / 60)).padStart(2, '0')}:${String(
-            endMins % 60
-          ).padStart(2, '0')}`;
-          items.push({
-            id: `task-${tk.id}`,
-            kind: 'task',
-            title: tk.title,
-            startTime: tk.dueTime || '18:00',
-            endTime: endT,
-            subjectId: tk.subjectId,
-            colorId: subj?.color ?? 'amber',
-          });
-        }
-      }
-    }
-
-    if (filters.alarms) {
-      for (const al of alarms) {
-        if (doesAlarmMatchDate(al, dateStr)) {
-          const startMins = timeToMinutes(al.time);
-          const endMins = Math.min(23 * 60 + 59, startMins + 30);
-          const endT = `${String(Math.floor(endMins / 60)).padStart(2, '0')}:${String(
-            endMins % 60
-          ).padStart(2, '0')}`;
-          items.push({
-            id: `alarm-${al.id}-${dateStr}`,
-            kind: 'alarm',
-            title: al.title,
-            startTime: al.time,
-            endTime: endT,
-            colorId: 'honey',
-          });
-        }
-      }
-    }
-
-    return items.sort((a, b) => a.startTime.localeCompare(b.startTime));
+    const occ = getOccurrencesBundleForDate(dateStr);
+    return occ.all
+      .filter(
+        (item): item is typeof item & { kind: 'class' | 'exam' | 'task' | 'alarm' } =>
+          item.kind !== 'habit'
+      )
+      .sort((a, b) => a.startTime.localeCompare(b.startTime));
   };
 
   const handlePrev = () => {
@@ -253,6 +165,7 @@ export const CalendarView: React.FC<{
       exams,
       timetable,
       tasks,
+      habits,
       alarms,
       subjects,
       filters,
@@ -465,20 +378,22 @@ export const CalendarView: React.FC<{
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           {/* 7-Column Calendar Grid */}
           <div className="lg:col-span-8 rounded-3xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 md:p-5 shadow-sm">
-            {/* Weekday Headers */}
+            {/* Weekday Headers: Full weekday names on sm+ screens, clean unclipped labels on narrow screens */}
             <div className="grid grid-cols-7 gap-1.5 mb-2">
               {orderedWeekdays.map((w) => {
                 const isWeekend = settings.weekendDays.includes(w.dayIndex);
                 return (
                   <div
                     key={w.dayIndex}
-                    className={`text-center text-[11px] font-bold uppercase tracking-wider py-1.5 rounded-lg ${
+                    data-testid="calendar-weekday-header"
+                    className={`text-center text-[11px] font-bold py-1.5 px-1 rounded-lg truncate ${
                       isWeekend
                         ? 'text-[var(--accent-primary)] bg-[var(--accent-soft)]/50'
                         : 'text-[var(--text-muted)]'
                     }`}
                   >
-                    {w.label}
+                    <span className="hidden sm:inline">{w.fullLabel}</span>
+                    <span className="sm:hidden">{w.shortLabel}</span>
                   </div>
                 );
               })}
@@ -494,9 +409,10 @@ export const CalendarView: React.FC<{
                 const isWeekend = settings.weekendDays.includes(dow);
                 const dayNumber = parseInt(dStr.slice(8, 10), 10);
 
-                const dayEvents = getEventsForDate(dStr);
+                const dayOccurrenceBundle = getOccurrencesBundleForDate(dStr);
+                const dayEvents = dayOccurrenceBundle.all;
                 const { visibleDots, overflowCount } = summarizeMonthCellEvents(dayEvents, 3);
-                const hasExam = dayEvents.some((e) => e.kind === 'exam');
+                const hasExam = dayOccurrenceBundle.exams.length > 0;
 
                 // Subtle heat tint when busyness toggle is enabled
                 const heatClass =
@@ -513,6 +429,9 @@ export const CalendarView: React.FC<{
                     key={dStr}
                     type="button"
                     data-calendar-date={dStr}
+                    data-calendar-dow={dow}
+                    data-event-count={dayEvents.length}
+                    data-class-count={dayOccurrenceBundle.classes.length}
                     onClick={() => setSelectedDay(dStr)}
                     className={`group relative min-h-[64px] sm:min-h-[82px] lg:min-h-[96px] rounded-2xl border p-2.5 flex flex-col justify-between text-start overflow-hidden transition ${heatClass} ${
                       isSelected
@@ -723,8 +642,12 @@ export const CalendarView: React.FC<{
                   mode === 'week' ? 'grid-cols-8' : 'grid-cols-2'
                 }`}
               >
-                <div className="p-3 text-center text-xs font-mono text-[var(--text-muted)] border-e border-[var(--border-subtle)]">
-                  GMT
+                <div
+                  dir="ltr"
+                  data-testid="calendar-tz-gutter"
+                  className="p-3 text-center text-xs font-mono text-[var(--text-muted)] border-e border-[var(--border-subtle)]"
+                >
+                  {formatGmtOffsetForDate(cursorDate, settings.timezone)}
                 </div>
                 {(mode === 'week' ? weekDates : [selectedDay]).map((dStr) => {
                   const isToday = dStr === todayStr;

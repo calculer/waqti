@@ -9,6 +9,9 @@ import {
   doesAlarmMatchDate,
   findMissedAlarms,
   getLocalDateString,
+  getMonthCalendarGrid,
+  getOccurrencesForDate,
+  getOrderedWeekdays,
   getWeekDates,
   isAlarmDueNow,
   isValidTimeOrder,
@@ -18,6 +21,14 @@ import {
   shiftDateString,
   summarizeMonthCellEvents,
 } from './dates';
+import {
+  computeToastRemainingMs,
+  createToastItem,
+  pauseToast,
+  pruneExpiredToasts,
+  pushToastToStack,
+  resumeToast,
+} from './toastTimer';
 import type { ActiveTimerState, AlarmReminder, Subject, TimetableSlot } from '../types';
 
 test('parseLocalDateTime parses YYYY-MM-DD in local time without UTC day shift', () => {
@@ -42,7 +53,7 @@ test('shiftDateString handles leap years, month/year boundaries, and DST transit
   assert.equal(shiftDateString('2026-11-01', 1), '2026-11-02');
 });
 
-test('getWeekDates respects locale weekStart (Saturday=6, Monday=1, Sunday=0)', () => {
+test('getWeekDates respects locale weekStart (Saturday=6, Monday=1, Sunday=7)', () => {
   // 2026-11-10 is Tuesday
   const satWeek = getWeekDates('2026-11-10', 6);
   assert.equal(satWeek[0], '2026-11-07'); // Saturday
@@ -52,9 +63,173 @@ test('getWeekDates respects locale weekStart (Saturday=6, Monday=1, Sunday=0)', 
   assert.equal(monWeek[0], '2026-11-09'); // Monday
   assert.equal(monWeek[6], '2026-11-15'); // Sunday
 
-  const sunWeek = getWeekDates('2026-11-10', 0);
+  const sunWeek = getWeekDates('2026-11-10', 7);
   assert.equal(sunWeek[0], '2026-11-08'); // Sunday
   assert.equal(sunWeek[6], '2026-11-14'); // Saturday
+});
+
+test('getOccurrencesForDate matches all 7 ISO weekdays identically regardless of weekStart (Saturday=6, Sunday=7, Monday=1)', () => {
+  const subjects: Subject[] = [
+    {
+      id: 'subj-math',
+      name: 'Mathematics',
+      color: 'honey',
+      icon: 'Sigma',
+      teacher: 'Dr. Tariq',
+      room: 'Amphi A',
+      coefficient: 5,
+      weeklyGoalHours: 6,
+      archived: false,
+      createdAt: '2026-09-01T00:00:00.000Z',
+    },
+  ];
+
+  // Create one class on every canonical ISO weekday 1..7
+  const slotsAll7Days: TimetableSlot[] = ([1, 2, 3, 4, 5, 6, 7] as const).map((isoDay) => ({
+    id: `slot-day-${isoDay}`,
+    subjectId: 'subj-math',
+    dayOfWeek: isoDay,
+    startTime: '09:00',
+    endTime: '10:30',
+    room: `Room ${isoDay}`,
+    teacher: 'Dr. Tariq',
+    recurrence: 'weekly',
+    type: 'lecture',
+    mode: isoDay === 7 ? 'remote' : isoDay === 6 ? 'hybrid' : 'in_person',
+  }));
+
+  // Test across all 3 weekStart configurations: Saturday (6), Sunday (7), Monday (1)
+  for (const weekStart of [6, 7, 1] as const) {
+    const orderedCols = getOrderedWeekdays('ar', weekStart, 'EEEE');
+    assert.equal(orderedCols[0].dayIndex, weekStart);
+    assert.equal(orderedCols.length, 7);
+
+    const weekDates = getWeekDates('2026-11-10', weekStart);
+    for (let i = 0; i < 7; i++) {
+      const dStr = weekDates[i];
+      const expectedIsoDay = orderedCols[i].dayIndex;
+      const occ = getOccurrencesForDate(dStr, {
+        timetable: slotsAll7Days,
+        subjects,
+        exams: [],
+        tasks: [],
+        habits: [],
+        alarms: [],
+      });
+      assert.equal(occ.classes.length, 1, `Expected 1 class on ${dStr} (ISO day ${expectedIsoDay})`);
+      assert.equal(occ.classes[0].slotId, `slot-day-${expectedIsoDay}`);
+    }
+  }
+});
+
+test('Month calendar grid shows event dots on all weekdays (not only Saturday), across month boundaries, leap-year Feb 29, and DST changes', () => {
+  const subjects: Subject[] = [
+    {
+      id: 'subj-1',
+      name: 'Physics',
+      color: 'sage',
+      icon: 'Atom',
+      teacher: 'Dr. Salma',
+      room: 'Lab 1',
+      coefficient: 4,
+      weeklyGoalHours: 4,
+      archived: false,
+      createdAt: '2026-09-01T00:00:00.000Z',
+    },
+  ];
+
+  // Classes on Saturday (6), Sunday (7), Monday (1), Tuesday (2), Wednesday (3), Thursday (4)
+  const slots: TimetableSlot[] = ([6, 7, 1, 2, 3, 4] as const).map((dow) => ({
+    id: `slot-${dow}`,
+    subjectId: 'subj-1',
+    dayOfWeek: dow,
+    startTime: '10:00',
+    endTime: '11:30',
+    room: 'Hall 1',
+    teacher: 'Dr. Salma',
+    recurrence: 'weekly',
+  }));
+
+  // November 2026 grid with Saturday weekStart (6)
+  const novGrid = getMonthCalendarGrid('2026-11-11', 6);
+  assert.ok(novGrid.includes('2026-10-31')); // Saturday Oct 31 boundary
+  assert.ok(novGrid.includes('2026-11-01')); // Sunday Nov 1 (DST transition day)
+  assert.ok(novGrid.includes('2026-11-02')); // Monday Nov 2
+
+  for (const dateStr of ['2026-10-31', '2026-11-01', '2026-11-02', '2026-11-08', '2026-11-09', '2026-11-10']) {
+    const occ = getOccurrencesForDate(dateStr, { timetable: slots, subjects });
+    const summary = summarizeMonthCellEvents(
+      occ.map((e) => ({ id: e.id, type: e.type, title: e.title })),
+      3
+    );
+    assert.equal(summary.visibleDots.length, 1, `Expected event dot on ${dateStr}`);
+  }
+
+  // Leap year Feb 29, 2028 (Tuesday = ISO 2)
+  const leapOcc = getOccurrencesForDate('2028-02-29', { timetable: slots, subjects });
+  assert.equal(leapOcc.classes.length, 1);
+  assert.equal(leapOcc.classes[0].slotId, 'slot-2');
+
+  // Spring DST transition day March 8, 2026 (Sunday = ISO 7)
+  const dstOcc = getOccurrencesForDate('2026-03-08', { timetable: slots, subjects });
+  assert.equal(dstOcc.classes.length, 1);
+  assert.equal(dstOcc.classes[0].slotId, 'slot-7');
+});
+
+test('Toast timer system auto-dismisses at 5s (8s for error), pauses on hover, caps stack at 3, and omits Undo when nothing changed', () => {
+  const t0 = 1_700_000_000_000;
+
+  // Normal toast = 5000ms, error toast = 8000ms
+  const normalToast = createToastItem({
+    message: '4 classes imported',
+    variant: 'success',
+    nowMs: t0,
+    importedCount: 4,
+    onUndo: () => {},
+  });
+  assert.equal(normalToast.durationMs, 5000);
+  assert.ok(typeof normalToast.onUndo === 'function');
+
+  const errorToast = createToastItem({
+    message: 'Import error',
+    variant: 'error',
+    nowMs: t0,
+  });
+  assert.equal(errorToast.durationMs, 8000);
+
+  // When nothingChanged or importedCount === 0, onUndo is stripped even if passed
+  const zeroImportToast = createToastItem({
+    message: '0 added · 3 duplicates skipped',
+    variant: 'warning',
+    nowMs: t0,
+    nothingChanged: true,
+    importedCount: 0,
+    onUndo: () => {},
+  });
+  assert.equal(zeroImportToast.onUndo, undefined);
+
+  // Pause after 2s elapsed -> 3s remaining even 10s later while paused
+  const paused = pauseToast(normalToast, t0 + 2000);
+  assert.equal(computeToastRemainingMs(paused, t0 + 12000), 3000);
+
+  // Resume at t0 + 12000 -> expires at t0 + 15000
+  const resumed = resumeToast(paused, t0 + 12000);
+  assert.equal(computeToastRemainingMs(resumed, t0 + 14000), 1000);
+  assert.equal(computeToastRemainingMs(resumed, t0 + 15000), 0);
+
+  // Stack capped at 3 toasts
+  let stack = pushToastToStack([], normalToast, 3);
+  stack = pushToastToStack(stack, errorToast, 3);
+  stack = pushToastToStack(stack, zeroImportToast, 3);
+  const fourthToast = createToastItem({ message: 'Fourth', nowMs: t0 });
+  stack = pushToastToStack(stack, fourthToast, 3);
+  assert.equal(stack.length, 3);
+  assert.equal(stack[2].message, 'Fourth');
+
+  // Prune expired after 6s (5s toasts expire, 8s error toast remains)
+  const after6s = pruneExpiredToasts([normalToast, errorToast], t0 + 6000);
+  assert.equal(after6s.length, 1);
+  assert.equal(after6s[0].id, errorToast.id);
 });
 
 test('isValidTimeOrder and detectSlotOverlaps catch invalid times and schedule conflicts', () => {

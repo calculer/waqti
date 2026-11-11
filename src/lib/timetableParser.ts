@@ -11,6 +11,7 @@ import type {
 } from '../types';
 import { SUBJECT_COLOR_LIST } from './colors';
 import { doTimeRangesOverlap, isValidTimeOrder, minutesToTime, timeToMinutes } from './dates';
+import { fromDate, toIsoWeekday } from './weekdays';
 
 export type ParsedSessionTypeChoice = SessionType | 'unknown';
 
@@ -260,7 +261,7 @@ const DAY_DICTIONARY: Array<{ day: WeekDay; terms: string[] }> = [
     terms: ['السبت', 'سبت', 'samedi', 'sam', 'saturday', 'sat'],
   },
   {
-    day: 0,
+    day: 7,
     terms: ['الاحد', 'احد', 'dimanche', 'dim', 'sunday', 'sun'],
   },
   {
@@ -287,6 +288,7 @@ const DAY_DICTIONARY: Array<{ day: WeekDay; terms: string[] }> = [
 
 /**
  * Detects a day of week from a token or line, tolerating accents, Arabic alef/teh variants, and 1-edit typos on full day names.
+ * Always returns canonical ISO 1–7 (Monday = 1 .. Sunday = 7).
  */
 export function detectDayOfWeekInText(rawText: string): {
   day: WeekDay | null;
@@ -298,31 +300,31 @@ export function detectDayOfWeekInText(rawText: string): {
   const patterns: Array<{ day: WeekDay; regex: RegExp }> = [
     {
       day: 6,
-      regex: /(?:^|[\s|,;:/\-()[\]])(السبت|سبت|samedi|sam\.?|saturday|sat\.?)(?=$|[\s|,;:/\-()[\]])/i,
+      regex: /(?:^|[\s|,;:/\-()[\]])((?:يوم\s+)?(?:السبت|سبت)|samedi|sam\.?|saturday|sat\.?)(?=$|[\s|,;:/\-()[\]])/i,
     },
     {
-      day: 0,
-      regex: /(?:^|[\s|,;:/\-()[\]])(الأحد|الاحد|أحد|احد|dimanche|dim\.?|sunday|sun\.?)(?=$|[\s|,;:/\-()[\]])/i,
+      day: 7,
+      regex: /(?:^|[\s|,;:/\-()[\]])((?:يوم\s+)?(?:الأحد|الاحد|أحد|احد)|dimanche|dim\.?|sunday|sun\.?)(?=$|[\s|,;:/\-()[\]])/i,
     },
     {
       day: 1,
-      regex: /(?:^|[\s|,;:/\-()[\]])(الاثنين|الإثنين|اثنين|إثنين|lundi|lun\.?|monday|mon\.?)(?=$|[\s|,;:/\-()[\]])/i,
+      regex: /(?:^|[\s|,;:/\-()[\]])((?:يوم\s+)?(?:الاثنين|الإثنين|اثنين|إثنين)|lundi|lun\.?|monday|mon\.?)(?=$|[\s|,;:/\-()[\]])/i,
     },
     {
       day: 2,
-      regex: /(?:^|[\s|,;:/\-()[\]])(الثلاثاء|ثلاثاء|ثلثاء|mardi|mar\.?|tuesday|tues\.?|tue\.?)(?=$|[\s|,;:/\-()[\]])/i,
+      regex: /(?:^|[\s|,;:/\-()[\]])((?:يوم\s+)?(?:الثلاثاء|ثلاثاء|ثلثاء)|mardi|mar\.?|tuesday|tues\.?|tue\.?)(?=$|[\s|,;:/\-()[\]])/i,
     },
     {
       day: 3,
-      regex: /(?:^|[\s|,;:/\-()[\]])(الأربعاء|الاربعاء|أربعاء|اربعاء|mercredi|mer\.?|wednesday|weds\.?|wed\.?)(?=$|[\s|,;:/\-()[\]])/i,
+      regex: /(?:^|[\s|,;:/\-()[\]])((?:يوم\s+)?(?:الأربعاء|الاربعاء|أربعاء|اربعاء)|mercredi|mer\.?|wednesday|weds\.?|wed\.?)(?=$|[\s|,;:/\-()[\]])/i,
     },
     {
       day: 4,
-      regex: /(?:^|[\s|,;:/\-()[\]])(الخميس|خميس|jeudi|jeu\.?|thursday|thurs\.?|thur\.?|thu\.?)(?=$|[\s|,;:/\-()[\]])/i,
+      regex: /(?:^|[\s|,;:/\-()[\]])((?:يوم\s+)?(?:الخميس|خميس)|jeudi|jeu\.?|thursday|thurs\.?|thur\.?|thu\.?)(?=$|[\s|,;:/\-()[\]])/i,
     },
     {
       day: 5,
-      regex: /(?:^|[\s|,;:/\-()[\]])(الجمعة|الجمعه|جمعة|جمعه|vendredi|ven\.?|friday|fri\.?)(?=$|[\s|,;:/\-()[\]])/i,
+      regex: /(?:^|[\s|,;:/\-()[\]])((?:يوم\s+)?(?:الجمعة|الجمعه|جمعة|جمعه)|vendredi|ven\.?|friday|fri\.?)(?=$|[\s|,;:/\-()[\]])/i,
     },
   ];
 
@@ -357,9 +359,9 @@ export function detectDayOfWeekInText(rawText: string): {
  */
 export function matchPureDayHeader(cellText: string): WeekDay | null {
   const trimmed = cellText.trim().replace(/^[:\-–—•*]+|[:\-–—•*]+$/g, '').trim();
-  if (!trimmed || trimmed.length > 22) return null;
+  if (!trimmed || trimmed.length > 26) return null;
   const { day, cleanedText } = detectDayOfWeekInText(trimmed);
-  if (day !== null && cleanedText.replace(/[:\-–—.\s]/g, '').length === 0) {
+  if (day !== null && cleanedText.replace(/^(?:يوم|jour)\b/i, '').replace(/[:\-–—.\s]/g, '').length === 0) {
     return day;
   }
   return null;
@@ -1268,8 +1270,10 @@ export function recomputeImportAnalysis(
     const r = updatedRows[i];
     if (r.dayOfWeek === null || !isValidTimeOrder(r.startTime, r.endTime)) continue;
 
+    const rowCanonicalDay = toIsoWeekday(r.dayOfWeek);
+
     for (const slot of existingSlots) {
-      if (slot.dayOfWeek !== r.dayOfWeek) continue;
+      if (toIsoWeekday(slot.dayOfWeek) !== rowCanonicalDay) continue;
       if (!doTimeRangesOverlap(r.startTime, r.endTime, slot.startTime, slot.endTime)) continue;
 
       const existingSubj = existingSubjects.find((s) => s.id === slot.subjectId);
@@ -1278,9 +1282,11 @@ export function recomputeImportAnalysis(
         r.matchedSubjectId === slot.subjectId ||
         (existingSubj &&
           computeStringSimilarity(r.subjectName, existingSubj.name) >= 0.72);
-      const sameType =
-        !slot.type || r.sessionType === 'unknown' || slot.type === r.sessionType;
-      const sameGroup = (slot.group || '') === (r.group || '');
+      const resolvedRowType = r.sessionType === 'unknown' ? 'lecture' : r.sessionType;
+      const resolvedSlotType = slot.type || 'lecture';
+      const sameType = resolvedSlotType === resolvedRowType;
+      const sameGroup =
+        (slot.group || '').trim().toUpperCase() === (r.group || '').trim().toUpperCase();
 
       if (sameTime && sameSubject && sameType && sameGroup) {
         r.duplicateOfSlotId = slot.id;
@@ -1300,7 +1306,7 @@ export function recomputeImportAnalysis(
       if (i === j) continue;
       const other = updatedRows[j];
       if (!r.include || !other.include) continue;
-      if (other.dayOfWeek !== r.dayOfWeek) continue;
+      if (other.dayOfWeek === null || toIsoWeekday(other.dayOfWeek) !== rowCanonicalDay) continue;
       if (!isValidTimeOrder(other.startTime, other.endTime)) continue;
 
       if (doTimeRangesOverlap(r.startTime, r.endTime, other.startTime, other.endTime)) {
@@ -1510,7 +1516,7 @@ export function parseIcsToRows(
     const m = parseInt(datePart.slice(4, 6), 10) - 1;
     const d = parseInt(datePart.slice(6, 8), 10);
     const localDate = new Date(y, m, d, 12, 0, 0);
-    const dow = localDate.getDay() as WeekDay;
+    const dow = fromDate(localDate);
 
     const combinedLine = `${summary} | ${location} | ${desc}`;
     const parsed = parseClassChunk(combinedLine, {

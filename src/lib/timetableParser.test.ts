@@ -122,7 +122,7 @@ test('3) AR list: parses Arabic lecture and subsequent TD line with section vs g
 
   assert.equal(result.rows.length, 2);
 
-  const sunRow = result.rows.find((r) => r.dayOfWeek === 0);
+  const sunRow = result.rows.find((r) => r.dayOfWeek === 7);
   assert.ok(sunRow);
   assert.equal(sunRow.startTime, '08:00');
   assert.equal(sunRow.endTime, '09:30');
@@ -252,6 +252,11 @@ test('6) Remote class with Zoom/Meet link, duplicate/conflict detection, and fuz
   assert.equal(row.duplicateOfSlotId, 'slot-existing-1');
   assert.ok(row.issues.includes('duplicate_existing'));
   assert.equal(result.duplicateCount, 1);
+
+  // Verify that different group or type is NOT flagged as duplicate (only conflict if same time)
+  const diffGroupRow = [{ ...row, group: 'G2' }];
+  const diffGroupAnalysis = recomputeImportAnalysis(diffGroupRow, mockSubjects, existingSlots);
+  assert.equal(diffGroupAnalysis.duplicateCount, 0);
 
   // Verify fuzzy subject matching ignoring accents and case
   const match = fuzzyMatchSubject('analyse 1', mockSubjects);

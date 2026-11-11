@@ -33,14 +33,15 @@ import {
   computeTimetableGridHours,
   computeWeeklyTimetableSummary,
   detectSlotOverlaps,
+  formatGmtOffsetForDate,
   formatLocalizedDate,
   formatShiftPillLabel,
   generateIcsContent,
   getLocalTimeString,
+  getOccurrencesForDate,
   getOrderedWeekdays,
   getWeekDates,
   getWeekDayIndex,
-  isSlotActiveOnDate,
   isValidTimeOrder,
   minutesToTime,
   packOverlappingEvents,
@@ -48,6 +49,7 @@ import {
   snapMinutesToStep,
   timeToMinutes,
 } from '../lib/dates';
+import { toIsoWeekday } from '../lib/weekdays';
 import { getSubjectColor } from '../lib/colors';
 import { EmptyHourglassIllustration } from '../components/WaqtiLogo';
 import {
@@ -353,12 +355,13 @@ export const TimetableView: React.FC<{
   // Count total active slots in the viewed week for whole-week empty state
   const totalWeekActiveSlots = useMemo(() => {
     return weekDayColumns.reduce((acc, col) => {
-      const count = filteredTimetable.filter((s) =>
-        isSlotActiveOnDate(s, col.dateStr, col.dayIndex)
-      ).length;
+      const count = getOccurrencesForDate(col.dateStr, {
+        timetable: filteredTimetable,
+        subjects,
+      }).length;
       return acc + count;
     }, 0);
-  }, [weekDayColumns, filteredTimetable]);
+  }, [weekDayColumns, filteredTimetable, subjects]);
 
   const activeSubjectId = subjectId || subjects[0]?.id || '';
 
@@ -716,7 +719,7 @@ export const TimetableView: React.FC<{
                 <button
                   type="button"
                   onClick={() => {
-                    duplicateDaySlots(selectedDay, ((selectedDay + 1) % 7) as WeekDay);
+                    duplicateDaySlots(selectedDay, toIsoWeekday((selectedDay % 7) + 1));
                     setIsOverflowMenuOpen(false);
                   }}
                   className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] transition text-start"
@@ -1219,9 +1222,10 @@ export const TimetableView: React.FC<{
         >
           {weekDayColumns.map((col) => {
             const isSelected = selectedDay === col.dayIndex;
-            const daySlotCount = timetable.filter((s) =>
-              isSlotActiveOnDate(s, col.dateStr, col.dayIndex)
-            ).length;
+            const daySlotCount = getOccurrencesForDate(col.dateStr, {
+              timetable,
+              subjects,
+            }).length;
             return (
               <button
                 key={col.dayIndex}
@@ -1315,12 +1319,14 @@ export const TimetableView: React.FC<{
             >
               {/* Sticky Day Headers Row */}
               <div className="sticky top-0 z-20 flex border-b border-[var(--border-subtle)] bg-[var(--bg-surface)]/95 backdrop-blur-md min-w-0">
-                {/* Top-Start Corner Hour Gutter Header */}
+                {/* Top-Start Corner Hour Gutter Header (Active Timezone GMT Offset) */}
                 <div
                   dir="ltr"
+                  data-testid="timetable-tz-gutter"
+                  title={settings.timezone}
                   className="w-14 sm:w-16 shrink-0 border-e border-[var(--border-subtle)] flex items-center justify-center py-3 text-[10px] font-mono-tabular font-semibold text-[var(--text-muted)]"
                 >
-                  UTC
+                  {formatGmtOffsetForDate(weekAnchorDate, settings.timezone)}
                 </div>
 
                 {/* Day Column Headers */}
@@ -1425,9 +1431,10 @@ export const TimetableView: React.FC<{
 
                   {/* Individual Day Columns */}
                   {gridColumnsToRender.map((col) => {
-                    const rawDaySlots = filteredTimetable.filter((s) =>
-                      isSlotActiveOnDate(s, col.dateStr, col.dayIndex)
-                    );
+                    const rawDaySlots = getOccurrencesForDate(col.dateStr, {
+                      timetable: filteredTimetable,
+                      subjects,
+                    }).classes.map((c) => c.slot);
                     const packedSlots = packOverlappingEvents(rawDaySlots);
                     const isEmptyDay = packedSlots.length === 0;
 
@@ -1630,6 +1637,10 @@ export const TimetableView: React.FC<{
                                   </div>
 
                                   <div className="flex items-center gap-0.5 shrink-0">
+                                    {/* Inline Type Badge for short blocks (< 64px height) via container query */}
+                                    <span className="waqti-slot-inline-badge items-center rounded px-1 py-0.2 text-[9px] font-extrabold uppercase tracking-tight bg-[var(--bg-surface)]/85 text-[var(--text-secondary)] border border-[var(--border-subtle)] leading-none">
+                                      {t(`timetable.typeShort.${slot.type ?? 'lecture'}`)}
+                                    </span>
                                     {hasCollision && (
                                       <span
                                         title={t('timetable.conflictBadge')}
@@ -1679,7 +1690,7 @@ export const TimetableView: React.FC<{
                                 <div
                                   data-testid="timetable-block-title"
                                   className={`mt-1 text-xs font-bold text-[var(--text-primary)] ${
-                                    durationMinutes < 50 ? 'line-clamp-1' : 'line-clamp-2'
+                                    durationMinutes < 55 ? 'line-clamp-1' : 'line-clamp-2'
                                   } min-w-0 [overflow-wrap:anywhere] leading-tight ${
                                     attendanceStatus === 'absent' ? 'line-through opacity-65' : ''
                                   }`}
@@ -1687,24 +1698,21 @@ export const TimetableView: React.FC<{
                                   {subj?.name}
                                 </div>
 
-                                {/* Compact Type + Mode + Group Badge Row */}
-                                {durationMinutes >= 45 && (
-                                  <div className="mt-1 min-w-0 overflow-hidden">
-                                    <SessionMetaBadges
-                                      lang={lang}
-                                      type={slot.type}
-                                      mode={slot.mode}
-                                      section={slot.section}
-                                      group={slot.group}
-                                      compactForGrid
-                                    />
-                                  </div>
-                                )}
+                                {/* Dedicated Type + Mode + Group Badge Row (Only shown when block height >= 64px via @container) */}
+                                <div className="waqti-slot-row-badges mt-1 min-w-0 overflow-hidden">
+                                  <SessionMetaBadges
+                                    lang={lang}
+                                    type={slot.type}
+                                    mode={slot.mode}
+                                    section={slot.section}
+                                    group={slot.group}
+                                    compactForGrid
+                                  />
+                                </div>
                               </div>
 
-                              {/* Bottom Metadata: Room & Teacher (Shown ONLY when container >= 126px and height allows) */}
-                              {durationMinutes >= 65 && (
-                                <div className="waqti-slot-meta items-center gap-1 text-[10px] text-[var(--text-muted)] min-w-0 overflow-hidden pt-0.5">
+                              {/* Bottom Metadata: Room & Teacher (Shown ONLY when container >= 126px wide and >= 82px tall) */}
+                              <div className="waqti-slot-meta items-center gap-1 text-[10px] text-[var(--text-muted)] min-w-0 overflow-hidden pt-0.5">
                                   <span className="truncate min-w-0">
                                     {slot.mode === 'remote'
                                       ? t('timetable.mode.remote')
@@ -1719,7 +1727,6 @@ export const TimetableView: React.FC<{
                                     </>
                                   )}
                                 </div>
-                              )}
 
                               {/* Bottom-Edge Resize Handle (5-minute snapping) */}
                               <div
@@ -1770,11 +1777,10 @@ export const TimetableView: React.FC<{
           {(() => {
             const activeCol =
               weekDayColumns.find((c) => c.dayIndex === selectedDay) ?? weekDayColumns[0];
-            const daySlots = filteredTimetable
-              .filter((s) =>
-                isSlotActiveOnDate(s, activeCol.dateStr, activeCol.dayIndex)
-              )
-              .sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
+            const daySlots = getOccurrencesForDate(activeCol.dateStr, {
+              timetable: filteredTimetable,
+              subjects,
+            }).classes.map((c) => c.slot);
 
             if (daySlots.length === 0) {
               return (
@@ -2264,7 +2270,8 @@ export const TimetableView: React.FC<{
 function rawSlotsForDay(
   timetable: TimetableSlot[],
   dateStr: string,
-  dayIndex: WeekDay
+  _dayIndex: WeekDay
 ): TimetableSlot[] {
-  return timetable.filter((s) => isSlotActiveOnDate(s, dateStr, dayIndex));
+  return getOccurrencesForDate(dateStr, { timetable }).classes.map((c) => c.slot);
 }
+

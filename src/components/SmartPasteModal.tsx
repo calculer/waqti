@@ -46,7 +46,12 @@ const SAMPLE_TIMETABLES = {
 };
 
 export const SmartPasteModal: React.FC<{
-  onImported?: (info: { count: number; snapshotId: string }) => void;
+  onImported?: (info: {
+    count: number;
+    skippedDuplicatesCount: number;
+    snapshotId: string | null;
+    rows: ParsedTimetableRow[];
+  }) => void;
 }> = ({ onImported }) => {
   const isOpen = useWaqtiStore((s) => s.isSmartPasteOpen);
   const initialPayload = useWaqtiStore((s) => s.smartPasteInitialPayload);
@@ -294,17 +299,32 @@ export const SmartPasteModal: React.FC<{
     );
   };
 
-  const includedValidCount = analysis.rows.filter(
+  const includedValidRows = analysis.rows.filter(
     (r) => r.include && r.dayOfWeek !== null && Boolean(r.subjectName.trim())
-  ).length;
+  );
+  const includedValidCount = includedValidRows.length;
+  const skippedDuplicatesInSelection =
+    importMode === 'add' && duplicateHandling === 'skip'
+      ? includedValidRows.filter((r) => r.issues.includes('duplicate_existing')).length
+      : 0;
+  const willImportCount = Math.max(0, includedValidCount - skippedDuplicatesInSelection);
 
-  const handleConfirmImport = () => {
+  const handleConfirmImport = (overrideDupHandling?: 'skip' | 'replace' | 'keep') => {
+    const effectiveDupHandling = overrideDupHandling ?? duplicateHandling;
     const res = batchImportTimetable({
       rows: analysis.rows,
       importMode,
-      duplicateHandling,
+      duplicateHandling: effectiveDupHandling,
     });
-    onImported?.({ count: res.importedCount, snapshotId: res.snapshotId });
+    if (res.importedCount === 0) {
+      closeSmartPaste();
+    }
+    onImported?.({
+      count: res.importedCount,
+      skippedDuplicatesCount: res.skippedDuplicatesCount,
+      snapshotId: res.snapshotId,
+      rows: analysis.rows,
+    });
   };
 
   return (
@@ -844,13 +864,21 @@ export const SmartPasteModal: React.FC<{
               {/* Sticky Footer Confirm Bar */}
               <div className="sticky -bottom-5 -mx-5 px-5 py-3.5 bg-[var(--bg-surface)] border-t border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-3 z-10">
                 <div className="text-xs text-[var(--text-muted)]">
-                  {t(lang, 'smartPaste.summaryBar', {
-                    total: analysis.totalDetected,
-                    review: analysis.needsReviewCount,
-                    conflicts: analysis.conflictCount,
-                  })}
+                  {willImportCount === 0 && skippedDuplicatesInSelection > 0 ? (
+                    <span className="font-semibold text-amber-700 dark:text-amber-300">
+                      {t(lang, 'smartPaste.zeroAddedDuplicatesSkipped', {
+                        skipped: skippedDuplicatesInSelection,
+                      })}
+                    </span>
+                  ) : (
+                    t(lang, 'smartPaste.summaryBar', {
+                      total: analysis.totalDetected,
+                      review: analysis.needsReviewCount,
+                      conflicts: analysis.conflictCount,
+                    })
+                  )}
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="button"
                     onClick={closeSmartPaste}
@@ -858,15 +886,24 @@ export const SmartPasteModal: React.FC<{
                   >
                     {t(lang, 'common.cancel')}
                   </button>
+                  {skippedDuplicatesInSelection > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => handleConfirmImport('keep')}
+                      className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-amber-500/15 border border-amber-500/40 text-amber-800 dark:text-amber-200 text-xs font-bold hover:bg-amber-500/25 cursor-pointer"
+                    >
+                      <span>{t(lang, 'smartPaste.addAnyway')}</span>
+                    </button>
+                  )}
                   <button
                     type="button"
                     disabled={includedValidCount === 0}
-                    onClick={handleConfirmImport}
+                    onClick={() => handleConfirmImport()}
                     className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl btn-primary-waqti text-xs cursor-pointer disabled:opacity-40"
                   >
                     <CheckCircle2 className="w-4 h-4" />
                     <span>
-                      {t(lang, 'smartPaste.confirmImport', { count: includedValidCount })}
+                      {t(lang, 'smartPaste.confirmImport', { count: willImportCount })}
                     </span>
                   </button>
                 </div>

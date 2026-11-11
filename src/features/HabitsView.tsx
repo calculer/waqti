@@ -58,7 +58,7 @@ export const HabitsView: React.FC<{
       icon: 'Flame',
       color,
       frequencyType,
-      targetDays: [0, 1, 2, 3, 4, 5, 6],
+      targetDays: [1, 2, 3, 4, 5, 6, 7],
       timesPerWeek,
     });
     setName('');

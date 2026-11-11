@@ -23,12 +23,14 @@ interface CommandPaletteProps {
   isOpen: boolean;
   onClose: () => void;
   onOpenQuickAdd: (tab?: QuickAddTab) => void;
+  lastUndoAction?: { label: string; onUndo: () => void } | null;
 }
 
 export const CommandPalette: React.FC<CommandPaletteProps> = ({
   isOpen,
   onClose,
   onOpenQuickAdd,
+  lastUndoAction,
 }) => {
   const { t } = useTranslation();
   const [query, setQuery] = useState('');
@@ -67,6 +69,28 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       subtitle: string;
       action: () => void;
     }[] = [];
+
+    if (lastUndoAction) {
+      const undoTitle = t('common.undoLastAction');
+      if (
+        !q ||
+        undoTitle.toLowerCase().includes(q) ||
+        lastUndoAction.label.toLowerCase().includes(q) ||
+        'undo'.includes(q) ||
+        'annuler'.includes(q) ||
+        'تراجع'.includes(q)
+      ) {
+        list.push({
+          id: 'cmd-undo-last',
+          title: undoTitle,
+          subtitle: lastUndoAction.label,
+          action: () => {
+            onClose();
+            lastUndoAction.onUndo();
+          },
+        });
+      }
+    }
 
     const pasteLabel = t('smartPaste.button');
     if (
@@ -169,6 +193,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     setActiveNav,
     openSmartPaste,
     onClose,
+    lastUndoAction,
     t,
   ]);
 

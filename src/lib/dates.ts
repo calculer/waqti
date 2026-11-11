@@ -7,7 +7,6 @@ import {
   endOfMonth,
   format,
   getDate,
-  getDay,
   getISOWeek,
   isAfter,
   isBefore,
@@ -26,7 +25,10 @@ import type {
   DeliveryMode,
   DigitsStyle,
   Exam,
+  Habit,
+  IsoWeekday,
   Language,
+  MeetingPlatform,
   MissedAlarmItem,
   RevisionSession,
   SessionType,
@@ -37,6 +39,16 @@ import type {
   WeekDay,
 } from '../types';
 import { formatDigits, formatTimeDisplay, t } from './i18n';
+import {
+  fromDate,
+  getOrderedWeekdays,
+  labelFor,
+  toDateFnsWeekStartsOn,
+  toIsoWeekday,
+} from './weekdays';
+
+export { fromDate, getOrderedWeekdays, labelFor, toDateFnsWeekStartsOn, toIsoWeekday };
+export const getOrderedWeekDays = getOrderedWeekdays;
 
 const DATE_FNS_LOCALES = {
   ar: arSA,
@@ -45,14 +57,61 @@ const DATE_FNS_LOCALES = {
 } as const;
 
 /**
- * Detects browser timezone safely, falling back to UTC if unavailable.
+ * Detects browser timezone safely, falling back to Europe/Paris or Africa/Algiers if UTC/unavailable.
  */
 export function detectTimezone(): string {
   try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    const resolved = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (resolved && resolved !== 'UTC' && resolved !== 'Etc/UTC') {
+      return resolved;
+    }
+    // Compute offset from local Date.getTimezoneOffset() if browser reports UTC despite offset
+    const offsetMins = -new Date().getTimezoneOffset();
+    if (offsetMins === 60) return 'Africa/Algiers';
+    if (offsetMins === 120) return 'Africa/Cairo';
+    if (offsetMins === 180) return 'Asia/Riyadh';
+    return 'Africa/Algiers';
   } catch {
-    return 'UTC';
+    return 'Africa/Algiers';
   }
+}
+
+/**
+ * Formats the GMT offset for a specific "YYYY-MM-DD" date in the user's real timezone
+ * (e.g. "GMT+1", "GMT+2", "GMT-8", "GMT") so DST transitions are reflected accurately per date.
+ */
+export function formatGmtOffsetForDate(dateStr: string, timeZone?: string): string {
+  const effectiveTz =
+    timeZone && timeZone !== 'UTC' ? timeZone : detectTimezone();
+  const targetDate = parseLocalDateTime(dateStr, '12:00');
+
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: effectiveTz,
+      timeZoneName: 'shortOffset',
+    }).formatToParts(targetDate);
+    const tzPart = parts.find((p) => p.type === 'timeZoneName')?.value;
+    if (tzPart) {
+      // Normalize "GMT+01:00" -> "GMT+1", "GMT-05:00" -> "GMT-5", "GMT+05:30" -> "GMT+5:30"
+      const normalized = tzPart
+        .replace(/^UTC/, 'GMT')
+        .replace(/([+-])0(\d)/, '$1$2')
+        .replace(/:00$/, '');
+      return normalized === 'GMT+0' || normalized === 'GMT-0' ? 'GMT' : normalized;
+    }
+  } catch {
+    // Fallback to local Date offset
+  }
+
+  const offsetMinutes = -targetDate.getTimezoneOffset();
+  if (offsetMinutes === 0) return 'GMT';
+  const sign = offsetMinutes > 0 ? '+' : '-';
+  const absMins = Math.abs(offsetMinutes);
+  const hrs = Math.floor(absMins / 60);
+  const mins = absMins % 60;
+  return mins > 0
+    ? `GMT${sign}${hrs}:${String(mins).padStart(2, '0')}`
+    : `GMT${sign}${hrs}`;
 }
 
 /**
@@ -108,8 +167,9 @@ export function getLocalTimeString(date: Date = new Date(), timeZone?: string): 
  * NEVER uses `new Date("YYYY-MM-DD")` (which parses as UTC and shifts the calendar day).
  */
 export function parseLocalDateTime(dateStr: string, timeStr: string = '00:00'): Date {
+  const cleanDate = dateStr.trim().slice(0, 10);
   const safeTime = /^\d{2}:\d{2}$/.test(timeStr) ? timeStr : '00:00';
-  return parseISO(`${dateStr}T${safeTime}:00`);
+  return parseISO(`${cleanDate}T${safeTime}:00`);
 }
 
 /**
@@ -157,7 +217,7 @@ export function doTimeRangesOverlap(
 }
 
 /**
- * Detects overlapping timetable slots on the same day of the week.
+ * Detects overlapping timetable slots on the same canonical ISO day of the week (1..7).
  */
 export function detectSlotOverlaps(
   candidate: {
@@ -168,9 +228,10 @@ export function detectSlotOverlaps(
   },
   existingSlots: TimetableSlot[]
 ): TimetableSlot[] {
+  const candDay = toIsoWeekday(candidate.dayOfWeek);
   return existingSlots.filter((slot) => {
     if (candidate.id && slot.id === candidate.id) return false;
-    if (slot.dayOfWeek !== candidate.dayOfWeek) return false;
+    if (toIsoWeekday(slot.dayOfWeek) !== candDay) return false;
     return doTimeRangesOverlap(
       candidate.startTime,
       candidate.endTime,
@@ -260,7 +321,10 @@ export function computeExamCountdown(
   const windowMinutes = 14 * 24 * 60;
   const progressPercent = Math.max(
     8,
-    Math.min(100, Math.round(((windowMinutes - Math.min(windowMinutes, totalMinutes)) / windowMinutes) * 100))
+    Math.min(
+      100,
+      Math.round(((windowMinutes - Math.min(windowMinutes, totalMinutes)) / windowMinutes) * 100)
+    )
   );
 
   return {
@@ -277,20 +341,22 @@ export function computeExamCountdown(
 
 /**
  * Returns 7 "YYYY-MM-DD" strings for the week containing `referenceDateStr` starting on `weekStart`.
+ * `weekStart` only controls display column ordering.
  */
 export function getWeekDates(referenceDateStr: string, weekStart: WeekDay): string[] {
   const ref = parseLocalDateTime(referenceDateStr, '12:00');
-  const start = startOfWeek(ref, { weekStartsOn: weekStart });
+  const start = startOfWeek(ref, { weekStartsOn: toDateFnsWeekStartsOn(weekStart) });
   return Array.from({ length: 7 }, (_, i) => format(addDays(start, i), 'yyyy-MM-dd'));
 }
 
 /**
  * Returns a 42-cell (6 weeks) calendar grid of "YYYY-MM-DD" strings for a month view.
+ * `weekStart` only controls display column ordering.
  */
 export function getMonthCalendarGrid(referenceDateStr: string, weekStart: WeekDay): string[] {
   const ref = parseLocalDateTime(referenceDateStr, '12:00');
   const monthStart = startOfMonth(ref);
-  const gridStart = startOfWeek(monthStart, { weekStartsOn: weekStart });
+  const gridStart = startOfWeek(monthStart, { weekStartsOn: toDateFnsWeekStartsOn(weekStart) });
   return Array.from({ length: 42 }, (_, i) => format(addDays(gridStart, i), 'yyyy-MM-dd'));
 }
 
@@ -311,10 +377,10 @@ export function shiftMonthString(dateStr: string, months: number): string {
 }
 
 /**
- * Gets the day of the week (0-6) for a "YYYY-MM-DD" string.
+ * Gets the canonical ISO day of the week (1..7, Monday=1 .. Sunday=7) for a "YYYY-MM-DD" string.
  */
-export function getWeekDayIndex(dateStr: string): WeekDay {
-  return getDay(parseLocalDateTime(dateStr, '12:00')) as WeekDay;
+export function getWeekDayIndex(dateStr: string): IsoWeekday {
+  return fromDate(dateStr);
 }
 
 /**
@@ -327,25 +393,13 @@ export function formatLocalizedDate(
   digitsStyle: DigitsStyle = 'western'
 ): string {
   const date = parseLocalDateTime(dateStr, '12:00');
+  if (lang === 'ar' && pattern === 'EEE d') {
+    const dayLbl = labelFor(fromDate(dateStr), 'ar', 'short');
+    const dayNum = format(date, 'd', { locale: DATE_FNS_LOCALES.ar });
+    return formatDigits(`${dayLbl} ${dayNum}`, lang, digitsStyle);
+  }
   const raw = format(date, pattern, { locale: DATE_FNS_LOCALES[lang] });
   return formatDigits(raw, lang, digitsStyle);
-}
-
-/**
- * Returns localized weekday names ordered by `weekStart`.
- */
-export function getOrderedWeekdays(
-  lang: Language,
-  weekStart: WeekDay,
-  formatPattern: 'EEEE' | 'EEE' | 'ccccc' = 'EEE'
-): { dayIndex: WeekDay; label: string }[] {
-  const baseSunday = parseLocalDateTime('2026-11-08', '12:00');
-  return Array.from({ length: 7 }, (_, idx) => {
-    const dayIndex = ((weekStart + idx) % 7) as WeekDay;
-    const d = addDays(baseSunday, dayIndex);
-    const label = format(d, formatPattern, { locale: DATE_FNS_LOCALES[lang] });
-    return { dayIndex, label };
-  });
 }
 
 /**
@@ -399,7 +453,10 @@ export function calculateHabitStreak(completedDates: string[], todayStr: string)
 /**
  * Timestamp-based Pomodoro calculation so background tabs and sleep/wake never drift.
  */
-export function computeRemainingTimerMs(timer: ActiveTimerState, nowMs: number = Date.now()): number {
+export function computeRemainingTimerMs(
+  timer: ActiveTimerState,
+  nowMs: number = Date.now()
+): number {
   const runningDelta =
     timer.isRunning && timer.startedAtTimestamp !== null
       ? Math.max(0, nowMs - timer.startedAtTimestamp)
@@ -435,15 +492,20 @@ export function generateRevisionPlanForExam(
   const sessions: RevisionSession[] = [];
   let topicIndex = 0;
 
-  for (let offset = 0; offset < daysBetween && sessions.length < Math.max(3, topics.length); offset++) {
+  for (
+    let offset = 0;
+    offset < daysBetween && sessions.length < Math.max(3, topics.length);
+    offset++
+  ) {
     const currentDate = addDays(start, offset);
     const dateStr = format(currentDate, 'yyyy-MM-dd');
-    const dayOfWeek = getDay(currentDate) as WeekDay;
+    const dayOfWeek = fromDate(currentDate);
+    const daySlots = getOccurrencesForDate(dateStr, existingSlots).map((occ) => occ.slot);
 
     const freeWindow = candidateWindows.find((win) => {
       const overlaps = detectSlotOverlaps(
         { dayOfWeek, startTime: win.startTime, endTime: win.endTime },
-        existingSlots
+        daySlots
       );
       return overlaps.length === 0;
     });
@@ -569,15 +631,16 @@ export function doesAlarmMatchDate(alarm: AlarmReminder, dateStr: string): boole
   if (alarm.recurrence === 'daily') {
     return true;
   }
-  const dayOfWeek = getWeekDayIndex(dateStr);
+  const dayOfWeek = fromDate(dateStr);
+  const normalizedDays = (alarm.daysOfWeek || []).map((d) => toIsoWeekday(d));
   if (alarm.recurrence === 'weekdays') {
-    return alarm.daysOfWeek.includes(dayOfWeek);
+    return normalizedDays.includes(dayOfWeek);
   }
   if (alarm.recurrence === 'weekly') {
-    if (alarm.daysOfWeek.length > 0) {
-      return alarm.daysOfWeek.includes(dayOfWeek);
+    if (normalizedDays.length > 0) {
+      return normalizedDays.includes(dayOfWeek);
     }
-    const anchorDay = getWeekDayIndex(alarm.date);
+    const anchorDay = fromDate(alarm.date);
     return dayOfWeek === anchorDay;
   }
   if (alarm.recurrence === 'monthly') {
@@ -711,10 +774,6 @@ export function computeTargetExamGrade(
 
 /**
  * Parses natural-language quick-capture input in English, French, or Arabic.
- * Examples:
- * - "Math exam Friday 09:00"
- * - "امتحان فيزياء غدا 10:00"
- * - "devoir de français demain 18:00"
  */
 export function parseQuickCaptureInput(
   rawText: string,
@@ -744,13 +803,13 @@ export function parseQuickCaptureInput(
       ? '09:00'
       : '18:00';
 
-  // Detect relative date or weekday
+  // Detect relative date or canonical ISO weekday (1..7)
   let date = todayStr;
   if (/\b(tomorrow|demain)\b|غدا|غداً/i.test(text)) {
     date = shiftDateString(todayStr, 1);
   } else {
-    const weekdayPatterns: { day: WeekDay; regex: RegExp }[] = [
-      { day: 0, regex: /\b(sunday|dimanche)\b|الأحد|الاحد/i },
+    const weekdayPatterns: { day: IsoWeekday; regex: RegExp }[] = [
+      { day: 7, regex: /\b(sunday|dimanche)\b|الأحد|الاحد/i },
       { day: 1, regex: /\b(monday|lundi)\b|الاثنين|الإثنين/i },
       { day: 2, regex: /\b(tuesday|mardi)\b|الثلاثاء/i },
       { day: 3, regex: /\b(wednesday|mercredi)\b|الأربعاء|الاربعاء/i },
@@ -760,7 +819,7 @@ export function parseQuickCaptureInput(
     ];
     for (const wp of weekdayPatterns) {
       if (wp.regex.test(text)) {
-        const currentDow = getWeekDayIndex(todayStr);
+        const currentDow = fromDate(todayStr);
         let delta = (wp.day - currentDow + 7) % 7;
         if (delta === 0) delta = 7;
         date = shiftDateString(todayStr, delta);
@@ -790,7 +849,426 @@ export function parseQuickCaptureInput(
 }
 
 /**
- * Generates an RFC 5545 `.ics` iCalendar string for classes, exams, and tasks.
+ * Checks whether a timetable slot occurs on a given "YYYY-MM-DD" date.
+ * Always derives the canonical ISO weekday (1..7) directly from `dateStr` using `parseISO`/`date-fns`,
+ * so `weekStart` settings can NEVER leak into occurrence matching.
+ *
+ * Handles:
+ * - Single-occurrence `specificDate` and `excludedDates`
+ * - Inclusive `semesterStart` and `semesterEnd`
+ * - `weekly` and `biweekly` (every-2-weeks) recurrence anchored to `semesterStart` when present
+ * - `weekParity` (`odd` / `even`)
+ */
+export function isSlotActiveOnDate(
+  slot: TimetableSlot,
+  dateStr: string,
+  _legacyIgnoredDay?: number
+): boolean {
+  if (slot.excludedDates && slot.excludedDates.includes(dateStr)) {
+    return false;
+  }
+
+  // Single-occurrence override/addition
+  if (slot.specificDate) {
+    return slot.specificDate === dateStr;
+  }
+
+  const targetIsoDay = fromDate(dateStr);
+  const slotIsoDay = toIsoWeekday(slot.dayOfWeek);
+  if (slotIsoDay !== targetIsoDay) {
+    return false;
+  }
+
+  // Inclusive series start / end boundaries
+  if (slot.semesterStart && dateStr < slot.semesterStart) {
+    return false;
+  }
+  if (slot.semesterEnd && dateStr > slot.semesterEnd) {
+    return false;
+  }
+
+  const targetDate = parseLocalDateTime(dateStr, '12:00');
+
+  // Odd / Even week parity check
+  if (slot.weekParity && slot.weekParity !== 'all') {
+    if (slot.semesterStart) {
+      const anchorMonday = startOfWeek(parseLocalDateTime(slot.semesterStart, '12:00'), {
+        weekStartsOn: 1,
+      });
+      const targetMonday = startOfWeek(targetDate, { weekStartsOn: 1 });
+      const weekNumberFromStart =
+        Math.floor(differenceInCalendarDays(targetMonday, anchorMonday) / 7) + 1;
+      const isOdd = Math.abs(weekNumberFromStart) % 2 === 1;
+      if (slot.weekParity === 'odd' && !isOdd) return false;
+      if (slot.weekParity === 'even' && isOdd) return false;
+    } else {
+      const isoWk = getISOWeek(targetDate);
+      const isOdd = isoWk % 2 === 1;
+      if (slot.weekParity === 'odd' && !isOdd) return false;
+      if (slot.weekParity === 'even' && isOdd) return false;
+    }
+    return true;
+  }
+
+  // Biweekly (every-2-weeks) recurrence anchored to semesterStart (or ISO week if no semesterStart)
+  if (slot.recurrence === 'biweekly') {
+    if (slot.semesterStart) {
+      const anchorMonday = startOfWeek(parseLocalDateTime(slot.semesterStart, '12:00'), {
+        weekStartsOn: 1,
+      });
+      const targetMonday = startOfWeek(targetDate, { weekStartsOn: 1 });
+      const weeksElapsed = Math.floor(differenceInCalendarDays(targetMonday, anchorMonday) / 7);
+      if (Math.abs(weeksElapsed) % 2 !== 0) return false;
+    } else {
+      const isoWk = getISOWeek(targetDate);
+      if (isoWk % 2 !== 0) return false;
+    }
+  }
+
+  return true;
+}
+
+export interface OccurrenceItem {
+  id: string;
+  kind: 'class' | 'exam' | 'task' | 'habit' | 'alarm';
+  date: string; // "YYYY-MM-DD"
+  dayOfWeek: IsoWeekday;
+  title: string;
+  startTime: string;
+  endTime: string;
+  subjectId?: string;
+  colorId: string;
+  room?: string;
+  teacher?: string;
+  countdownLabel?: string;
+  sessionType?: SessionType;
+  type: SessionType;
+  deliveryMode?: DeliveryMode;
+  mode: DeliveryMode;
+  section?: string;
+  group?: string;
+  meetingUrl?: string;
+  platform?: MeetingPlatform;
+  slotId?: string;
+  slot: TimetableSlot;
+  doneOnDay?: boolean;
+}
+
+export interface OccurrencesSourceOptions {
+  timetable?: TimetableSlot[];
+  subjects?: Subject[];
+  exams?: Exam[];
+  tasks?: StudyTask[];
+  habits?: Habit[];
+  alarms?: AlarmReminder[];
+  weekStart?: WeekDay;
+  filters?: {
+    classes?: boolean;
+    exams?: boolean;
+    tasks?: boolean;
+    habits?: boolean;
+    alarms?: boolean;
+  };
+  filterSessionType?: 'all' | SessionType;
+  filterDeliveryMode?: 'all' | DeliveryMode;
+  includeAllEvents?: boolean;
+  lang?: Language;
+  timeFormat?: TimeFormat;
+  digitsStyle?: DigitsStyle;
+  now?: Date;
+}
+
+export type OccurrencesResultArray = OccurrenceItem[] & {
+  classes: OccurrenceItem[];
+  exams: OccurrenceItem[];
+  tasks: OccurrenceItem[];
+  habits: OccurrenceItem[];
+  alarms: OccurrenceItem[];
+  all: OccurrenceItem[];
+};
+
+let defaultOccurrenceSourceGetter: (() => OccurrencesSourceOptions) | null = null;
+
+/**
+ * Registers a default state getter from the store so `getOccurrencesForDate(dateString)`
+ * can also be called with a single argument anywhere in the app or tests.
+ */
+export function registerDefaultOccurrenceSource(
+  getter: () => OccurrencesSourceOptions
+): void {
+  defaultOccurrenceSourceGetter = getter;
+}
+
+/**
+ * Single source of truth for all occurrences on a given "YYYY-MM-DD" date.
+ * Used across Month view, Week view, Day view, Agenda, Weekly Timetable, Dashboard, Alarms, Statistics, and .ics export.
+ *
+ * `weekStart` (if passed in options) NEVER affects which classes or events match `dateString`.
+ */
+export function getOccurrencesForDate(
+  dateString: string,
+  source?: TimetableSlot[] | OccurrencesSourceOptions
+): OccurrencesResultArray {
+  const resolvedSource: OccurrencesSourceOptions = Array.isArray(source)
+    ? { timetable: source }
+    : source ?? (defaultOccurrenceSourceGetter ? defaultOccurrenceSourceGetter() : {});
+
+  const timetable = resolvedSource.timetable ?? [];
+  const subjects = resolvedSource.subjects ?? [];
+  const exams = resolvedSource.exams ?? [];
+  const tasks = resolvedSource.tasks ?? [];
+  const habits = resolvedSource.habits ?? [];
+  const alarms = resolvedSource.alarms ?? [];
+  const filters = resolvedSource.filters ?? {
+    classes: true,
+    exams: true,
+    tasks: true,
+    habits: true,
+    alarms: true,
+  };
+  const filterSessionType = resolvedSource.filterSessionType ?? 'all';
+  const filterDeliveryMode = resolvedSource.filterDeliveryMode ?? 'all';
+  const lang = resolvedSource.lang ?? 'en';
+  const timeFormat = resolvedSource.timeFormat ?? '24h';
+  const digitsStyle = resolvedSource.digitsStyle ?? 'western';
+  const now = resolvedSource.now ?? new Date();
+
+  const dow = fromDate(dateString);
+
+  // 1. Classes
+  const classItems: OccurrenceItem[] = [];
+  if (filters.classes !== false) {
+    for (const sl of timetable) {
+      if (!isSlotActiveOnDate(sl, dateString)) continue;
+      const slType: SessionType = sl.type ?? 'lecture';
+      const slMode: DeliveryMode = sl.mode ?? 'in_person';
+      if (filterSessionType !== 'all' && slType !== filterSessionType) continue;
+      if (filterDeliveryMode !== 'all' && slMode !== filterDeliveryMode) continue;
+
+      const subj = subjects.find((s) => s.id === sl.subjectId);
+      classItems.push({
+        id: `class-${sl.id}-${dateString}`,
+        kind: 'class',
+        date: dateString,
+        dayOfWeek: dow,
+        title: subj?.name ?? 'Class',
+        startTime: sl.startTime,
+        endTime: sl.endTime,
+        subjectId: sl.subjectId,
+        colorId: sl.customColor ?? subj?.color ?? 'honey',
+        room: sl.room,
+        teacher: sl.teacher,
+        sessionType: slType,
+        type: slType,
+        deliveryMode: slMode,
+        mode: slMode,
+        section: sl.section,
+        group: sl.group,
+        meetingUrl: sl.meetingUrl,
+        platform: sl.platform,
+        slotId: sl.id,
+        slot: {
+          ...sl,
+          dayOfWeek: toIsoWeekday(sl.dayOfWeek),
+          type: slType,
+          mode: slMode,
+        },
+      });
+    }
+    classItems.sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
+  }
+
+  // 2. Exams
+  const examItems: OccurrenceItem[] = [];
+  if (filters.exams !== false) {
+    for (const ex of exams) {
+      if (ex.date !== dateString) continue;
+      const subj = subjects.find((s) => s.id === ex.subjectId);
+      const endMins = timeToMinutes(ex.startTime) + (ex.durationMinutes || 90);
+      const endH = String(Math.min(23, Math.floor(endMins / 60))).padStart(2, '0');
+      const endM = String(endMins % 60).padStart(2, '0');
+      const cd = computeExamCountdown(
+        ex.date,
+        ex.startTime,
+        now,
+        lang,
+        timeFormat,
+        digitsStyle
+      );
+      const exMode: DeliveryMode = ex.mode ?? 'in_person';
+      const exType: SessionType = ex.sessionType ?? 'other';
+      examItems.push({
+        id: `exam-${ex.id}`,
+        kind: 'exam',
+        date: dateString,
+        dayOfWeek: dow,
+        title: ex.title,
+        startTime: ex.startTime,
+        endTime: `${endH}:${endM}`,
+        subjectId: ex.subjectId,
+        colorId: subj?.color ?? 'terracotta',
+        room: ex.room,
+        countdownLabel: cd.label,
+        sessionType: exType,
+        type: exType,
+        deliveryMode: exMode,
+        mode: exMode,
+        meetingUrl: ex.meetingUrl,
+        platform: ex.platform,
+        slot: {
+          id: ex.id,
+          subjectId: ex.subjectId,
+          dayOfWeek: dow,
+          startTime: ex.startTime,
+          endTime: `${endH}:${endM}`,
+          room: ex.room,
+          teacher: '',
+          recurrence: 'custom',
+          specificDate: dateString,
+        },
+      });
+    }
+  }
+
+  // 3. Tasks
+  const taskItems: OccurrenceItem[] = [];
+  if (filters.tasks !== false) {
+    for (const tk of tasks) {
+      if (tk.dueDate !== dateString) continue;
+      const subj = subjects.find((s) => s.id === tk.subjectId);
+      const startMins = timeToMinutes(tk.dueTime || '18:00');
+      const endMins = Math.min(23 * 60 + 59, startMins + 45);
+      const endT = `${String(Math.floor(endMins / 60)).padStart(2, '0')}:${String(
+        endMins % 60
+      ).padStart(2, '0')}`;
+      taskItems.push({
+        id: `task-${tk.id}`,
+        kind: 'task',
+        date: dateString,
+        dayOfWeek: dow,
+        title: tk.title,
+        startTime: tk.dueTime || '18:00',
+        endTime: endT,
+        subjectId: tk.subjectId,
+        colorId: subj?.color ?? 'amber',
+        type: 'other',
+        mode: 'in_person',
+        slot: {
+          id: tk.id,
+          subjectId: tk.subjectId,
+          dayOfWeek: dow,
+          startTime: tk.dueTime || '18:00',
+          endTime: endT,
+          room: '',
+          teacher: '',
+          recurrence: 'custom',
+          specificDate: dateString,
+        },
+      });
+    }
+  }
+
+  // 4. Habits
+  const habitItems: OccurrenceItem[] = [];
+  if (filters.habits !== false) {
+    for (const hb of habits) {
+      const targetIsoDays = (hb.targetDays || []).map((d) => toIsoWeekday(d));
+      const matchesDay =
+        hb.frequencyType === 'daily' ||
+        targetIsoDays.length === 0 ||
+        targetIsoDays.includes(dow);
+      if (!matchesDay) continue;
+      const startT = hb.reminderTimes?.[0] || '20:00';
+      const startMins = timeToMinutes(startT);
+      const endMins = Math.min(23 * 60 + 59, startMins + 30);
+      const endT = `${String(Math.floor(endMins / 60)).padStart(2, '0')}:${String(
+        endMins % 60
+      ).padStart(2, '0')}`;
+      habitItems.push({
+        id: `habit-${hb.id}-${dateString}`,
+        kind: 'habit',
+        date: dateString,
+        dayOfWeek: dow,
+        title: hb.name,
+        startTime: startT,
+        endTime: endT,
+        colorId: hb.color ?? 'sage',
+        type: 'other',
+        mode: 'in_person',
+        doneOnDay: hb.completedDates.includes(dateString),
+        slot: {
+          id: hb.id,
+          subjectId: '',
+          dayOfWeek: dow,
+          startTime: startT,
+          endTime: endT,
+          room: '',
+          teacher: '',
+          recurrence: 'weekly',
+        },
+      });
+    }
+  }
+
+  // 5. Alarms
+  const alarmItems: OccurrenceItem[] = [];
+  if (filters.alarms !== false) {
+    for (const al of alarms) {
+      if (!doesAlarmMatchDate(al, dateString)) continue;
+      const startMins = timeToMinutes(al.time);
+      const endMins = Math.min(23 * 60 + 59, startMins + 30);
+      const endT = `${String(Math.floor(endMins / 60)).padStart(2, '0')}:${String(
+        endMins % 60
+      ).padStart(2, '0')}`;
+      alarmItems.push({
+        id: `alarm-${al.id}-${dateString}`,
+        kind: 'alarm',
+        date: dateString,
+        dayOfWeek: dow,
+        title: al.title,
+        startTime: al.time,
+        endTime: endT,
+        colorId: 'honey',
+        type: al.sessionType ?? 'other',
+        mode: al.mode ?? 'in_person',
+        meetingUrl: al.meetingUrl,
+        platform: al.platform,
+        slot: {
+          id: al.id,
+          subjectId: '',
+          dayOfWeek: dow,
+          startTime: al.time,
+          endTime: endT,
+          room: '',
+          teacher: '',
+          recurrence: 'custom',
+          specificDate: dateString,
+        },
+      });
+    }
+  }
+
+  const allItems = [
+    ...examItems,
+    ...classItems,
+    ...taskItems,
+    ...alarmItems,
+    ...habitItems,
+  ].sort((a, b) => a.startTime.localeCompare(b.startTime));
+
+  const baseArray = resolvedSource.includeAllEvents ? [...allItems] : [...classItems];
+  return Object.assign(baseArray, {
+    classes: classItems,
+    exams: examItems,
+    tasks: taskItems,
+    habits: habitItems,
+    alarms: alarmItems,
+    all: allItems,
+  });
+}
+
+/**
+ * Generates an RFC 5545 `.ics` iCalendar string for classes, exams, and tasks using `getOccurrencesForDate`.
  */
 export function generateIcsContent(
   timetable: TimetableSlot[],
@@ -840,12 +1318,12 @@ export function generateIcsContent(
     );
   }
 
-  // Export current week's classes with full type, section, group, teacher, room/meetingUrl, and mode
+  // Export current week's classes using getOccurrencesForDate as the single source of truth
   const weekDates = getWeekDates(todayStr, 1);
   for (const dStr of weekDates) {
-    const dow = getWeekDayIndex(dStr);
-    const daySlots = timetable.filter((s) => isSlotActiveOnDate(s, dStr, dow));
-    for (const slot of daySlots) {
+    const dayOccurrences = getOccurrencesForDate(dStr, { timetable, subjects }).classes;
+    for (const occ of dayOccurrences) {
+      const slot = occ.slot;
       const subj = subjects.find((s) => s.id === slot.subjectId);
       const typeTag = (slot.type || 'lecture').toUpperCase();
       const modeTag = slot.mode || 'in_person';
@@ -883,32 +1361,7 @@ export function generateIcsContent(
 }
 
 /**
- * Checks whether a timetable slot occurs on a given "YYYY-MM-DD" date and dayOfWeek,
- * respecting single-occurrence `specificDate`, `excludedDates`, `semesterStart`/`semesterEnd`, and `weekParity`.
- */
-export function isSlotActiveOnDate(
-  slot: TimetableSlot,
-  dateStr: string,
-  dayOfWeek: WeekDay
-): boolean {
-  if (slot.dayOfWeek !== dayOfWeek) return false;
-  if (slot.excludedDates && slot.excludedDates.includes(dateStr)) return false;
-  if (slot.specificDate && slot.specificDate !== dateStr) return false;
-  if (slot.semesterStart && dateStr < slot.semesterStart) return false;
-  if (slot.semesterEnd && dateStr > slot.semesterEnd) return false;
-  if (slot.weekParity && slot.weekParity !== 'all') {
-    const isoWk = getISOWeek(parseLocalDateTime(dateStr, '12:00'));
-    const isOdd = isoWk % 2 === 1;
-    if (slot.weekParity === 'odd' && !isOdd) return false;
-    if (slot.weekParity === 'even' && isOdd) return false;
-  }
-  return true;
-}
-
-/**
  * Computes the start and end hour for the Weekly Timetable vertical time axis.
- * When `autoFit` is true, fits to the earliest class minus 1h and latest class plus 1h
- * (defaulting to 07:00 – 19:00 with a minimum 10-hour span).
  */
 export function computeTimetableGridHours(
   slots: TimetableSlot[],
@@ -995,7 +1448,7 @@ export function shouldShowCompactTimeOnly(blockWidthPx: number): boolean {
 }
 
 /**
- * Computes weekly summary statistics for the active 7-day week:
+ * Computes weekly summary statistics for the active 7-day week using `getOccurrencesForDate`:
  * - Total class hours
  * - Busiest day index & hours
  * - Count of available 90-minute daytime study windows (08:00–20:00)
@@ -1023,8 +1476,8 @@ export function computeWeeklyTimetableSummary(
   ];
 
   for (const dStr of weekDates) {
-    const dow = getWeekDayIndex(dStr);
-    const activeDaySlots = slots.filter((s) => isSlotActiveOnDate(s, dStr, dow));
+    const dow = fromDate(dStr);
+    const activeDaySlots = getOccurrencesForDate(dStr, slots).map((o) => o.slot);
 
     let dayMins = 0;
     for (const s of activeDaySlots) {
@@ -1064,7 +1517,8 @@ export function computeWeeklyTimetableSummary(
  */
 export function computeStatsByTypeAndMode(
   slots: TimetableSlot[],
-  attendance: AttendanceRecord[]
+  attendance: AttendanceRecord[],
+  referenceWeekDates?: string[]
 ): {
   hoursByType: Record<SessionType, number>;
   hoursByMode: Record<DeliveryMode, number>;
@@ -1086,6 +1540,16 @@ export function computeStatsByTypeAndMode(
   const slotMap = new Map<string, TimetableSlot>();
   for (const s of slots) {
     slotMap.set(s.id, s);
+  }
+
+  const effectiveSlots =
+    referenceWeekDates && referenceWeekDates.length === 7
+      ? referenceWeekDates.flatMap((dStr) =>
+          getOccurrencesForDate(dStr, slots).map((o) => o.slot)
+        )
+      : slots;
+
+  for (const s of effectiveSlots) {
     const dur = Math.max(0, timeToMinutes(s.endTime) - timeToMinutes(s.startTime));
     const st: SessionType = s.type || 'lecture';
     const md: DeliveryMode = s.mode || 'in_person';
@@ -1148,4 +1612,3 @@ export function computeStatsByTypeAndMode(
 }
 
 export { endOfMonth, isAfter, isBefore, isSameDay, subMinutes };
-

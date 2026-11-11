@@ -46,14 +46,14 @@ export const SettingsView: React.FC = () => {
 
   const [confirmReset, setConfirmReset] = useState(false);
 
-  const weekdays = getOrderedWeekdays(lang, 0, 'EEEE');
+  const weekdays = getOrderedWeekdays(lang, 1, 'EEEE');
 
   const accentLabelKeyMap: Record<string, string> = {
-    honey: 'settings.accentHoney',
-    sand: 'settings.accentSand',
-    olive: 'settings.accentOlive',
-    terracotta: 'settings.accentTerracotta',
-    slate: 'settings.accentSlate',
+    honey: 'settings.accent.honey',
+    sand: 'settings.accent.sand',
+    olive: 'settings.accent.olive',
+    terracotta: 'settings.accent.terracotta',
+    slate: 'settings.accent.slate',
   };
 
   const handleExportJson = () => {

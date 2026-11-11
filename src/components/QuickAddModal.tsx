@@ -146,7 +146,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
         icon: 'Sparkles',
         color: 'honey',
         frequencyType: 'daily',
-        targetDays: [0, 1, 2, 3, 4, 5, 6],
+        targetDays: [1, 2, 3, 4, 5, 6, 7],
         timesPerWeek: 7,
       });
     } else if (tab === 'alarm') {
@@ -155,7 +155,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
         date,
         time: startTime,
         recurrence: alarmRecurrence,
-        daysOfWeek: [0, 1, 2, 3, 4, 5, 6],
+        daysOfWeek: [1, 2, 3, 4, 5, 6, 7],
         linkedType: 'custom',
         sound: settings.defaultAlarmSound,
         vibrate: settings.alarmVibration,
