@@ -370,7 +370,7 @@ export default function App() {
         </header>
 
         {/* Main Screen Container */}
-        <main className="flex-1 px-4 md:px-8 py-6 max-w-7xl w-full mx-auto">
+        <main className="flex-1 px-4 md:px-8 py-6 max-w-[1600px] w-full min-w-0 mx-auto">
           {activeNav === 'dashboard' && (
             <DashboardView
               onOpenQuickAdd={(tab = 'task') => setQuickAddState({ open: true, tab })}

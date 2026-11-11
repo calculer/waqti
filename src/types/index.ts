@@ -46,6 +46,8 @@ export interface TimetableSlot {
   customColor?: SubjectColorId;
   notes?: string;
   excludedDates?: string[]; // "YYYY-MM-DD"
+  specificDate?: string; // "YYYY-MM-DD" when edited as a single occurrence
+  attendanceByDate?: Record<string, 'attended' | 'absent'>;
 }
 
 export type ExamType =

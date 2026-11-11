@@ -859,4 +859,173 @@ export function generateIcsContent(
   return lines.join('\r\n');
 }
 
+/**
+ * Checks whether a timetable slot occurs on a given "YYYY-MM-DD" date and dayOfWeek,
+ * respecting single-occurrence `specificDate` and `excludedDates`.
+ */
+export function isSlotActiveOnDate(
+  slot: TimetableSlot,
+  dateStr: string,
+  dayOfWeek: WeekDay
+): boolean {
+  if (slot.dayOfWeek !== dayOfWeek) return false;
+  if (slot.excludedDates && slot.excludedDates.includes(dateStr)) return false;
+  if (slot.specificDate && slot.specificDate !== dateStr) return false;
+  return true;
+}
+
+/**
+ * Computes the start and end hour for the Weekly Timetable vertical time axis.
+ * When `autoFit` is true, fits to the earliest class minus 1h and latest class plus 1h
+ * (defaulting to 07:00 – 19:00 with a minimum 10-hour span).
+ */
+export function computeTimetableGridHours(
+  slots: TimetableSlot[],
+  autoFit: boolean = true,
+  customStartHour: number = 7,
+  customEndHour: number = 20
+): { startHour: number; endHour: number; hours: number[] } {
+  if (!autoFit || slots.length === 0) {
+    const s = Math.max(0, Math.min(21, customStartHour));
+    const e = Math.max(s + 4, Math.min(24, customEndHour));
+    const hours = Array.from({ length: e - s + 1 }, (_, i) => s + i);
+    return { startHour: s, endHour: e, hours };
+  }
+
+  let minMin = 24 * 60;
+  let maxMin = 0;
+  for (const slot of slots) {
+    const s = timeToMinutes(slot.startTime);
+    const e = timeToMinutes(slot.endTime);
+    if (s < minMin) minMin = s;
+    if (e > maxMin) maxMin = e;
+  }
+
+  let startHour = Math.max(5, Math.min(8, Math.floor(minMin / 60) - 1));
+  let endHour = Math.min(23, Math.max(18, Math.ceil(maxMin / 60) + 1));
+  if (endHour - startHour < 10) {
+    endHour = Math.min(23, startHour + 10);
+  }
+
+  const hours = Array.from({ length: endHour - startHour + 1 }, (_, i) => startHour + i);
+  return { startHour, endHour, hours };
+}
+
+/**
+ * Computes exact vertical offset (`topPx`), proportional block height (`heightPx`, minimum `minHeightPx`),
+ * and duration in minutes for a class block inside the time grid.
+ */
+export function computeTimetableBlockMetrics(
+  startTime: string,
+  endTime: string,
+  gridStartHour: number,
+  pixelsPerHour: number = 68,
+  minHeightPx: number = 40
+): { topPx: number; heightPx: number; durationMinutes: number } {
+  const startMin = timeToMinutes(startTime);
+  const endMin = timeToMinutes(endTime);
+  const durationMinutes = Math.max(15, endMin - startMin);
+  const offsetMinutes = Math.max(0, startMin - gridStartHour * 60);
+  const pxPerMin = pixelsPerHour / 60;
+  const topPx = Math.round(offsetMinutes * pxPerMin);
+  const heightPx = Math.max(minHeightPx, Math.round(durationMinutes * pxPerMin));
+  return { topPx, heightPx, durationMinutes };
+}
+
+/**
+ * Snaps a raw minute count to the nearest `step` (default 5 minutes) and clamps within `[minMins, maxMins]`.
+ */
+export function snapMinutesToStep(
+  rawMinutes: number,
+  step: number = 5,
+  minMins: number = 0,
+  maxMins: number = 24 * 60 - 5
+): number {
+  const snapped = Math.round(rawMinutes / step) * step;
+  return Math.max(minMins, Math.min(maxMins, snapped));
+}
+
+/**
+ * Formats a time-shift pill label using Western numerals (`0-9`) and localized short unit
+ * ("min" / "د" / "min") in a single nowrap string (e.g. "-15 min", "+30 د").
+ */
+export function formatShiftPillLabel(deltaMinutes: number, lang: Language): string {
+  const sign = deltaMinutes > 0 ? '+' : '';
+  const unit = lang === 'ar' ? 'د' : 'min';
+  return `${sign}${deltaMinutes} ${unit}`;
+}
+
+/**
+ * Determines whether a timetable block at `blockWidthPx` is too narrow for the full
+ * "HH:mm – HH:mm" range and should display only the start time on the surface (with full range in tooltip).
+ */
+export function shouldShowCompactTimeOnly(blockWidthPx: number): boolean {
+  return blockWidthPx < 116;
+}
+
+/**
+ * Computes weekly summary statistics for the active 7-day week:
+ * - Total class hours
+ * - Busiest day index & hours
+ * - Count of available 90-minute daytime study windows (08:00–20:00)
+ */
+export function computeWeeklyTimetableSummary(
+  slots: TimetableSlot[],
+  weekDates: string[]
+): {
+  totalHours: number;
+  busiestDayIndex: WeekDay | null;
+  busiestDayHours: number;
+  freeSlotsCount: number;
+} {
+  let totalMinutes = 0;
+  let busiestDayIndex: WeekDay | null = null;
+  let busiestDayMinutes = 0;
+  let freeSlotsCount = 0;
+
+  const candidateStudyWindows = [
+    { start: 8 * 60 + 30, end: 10 * 60 },
+    { start: 10 * 60 + 30, end: 12 * 60 },
+    { start: 14 * 60, end: 15 * 60 + 30 },
+    { start: 16 * 60, end: 17 * 60 + 30 },
+    { start: 18 * 60, end: 19 * 60 + 30 },
+  ];
+
+  for (const dStr of weekDates) {
+    const dow = getWeekDayIndex(dStr);
+    const activeDaySlots = slots.filter((s) => isSlotActiveOnDate(s, dStr, dow));
+
+    let dayMins = 0;
+    for (const s of activeDaySlots) {
+      const dur = Math.max(0, timeToMinutes(s.endTime) - timeToMinutes(s.startTime));
+      dayMins += dur;
+    }
+
+    totalMinutes += dayMins;
+    if (dayMins > busiestDayMinutes) {
+      busiestDayMinutes = dayMins;
+      busiestDayIndex = dow;
+    }
+
+    for (const win of candidateStudyWindows) {
+      const hasConflict = activeDaySlots.some((s) => {
+        const sMin = timeToMinutes(s.startTime);
+        const eMin = timeToMinutes(s.endTime);
+        return win.start < eMin && sMin < win.end;
+      });
+      if (!hasConflict) {
+        freeSlotsCount += 1;
+      }
+    }
+  }
+
+  return {
+    totalHours: Number((totalMinutes / 60).toFixed(1)),
+    busiestDayIndex,
+    busiestDayHours: Number((busiestDayMinutes / 60).toFixed(1)),
+    freeSlotsCount,
+  };
+}
+
 export { endOfMonth, isAfter, isBefore, isSameDay, subMinutes };
+

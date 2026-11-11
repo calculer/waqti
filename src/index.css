@@ -229,6 +229,41 @@ body {
   }
 }
 
+/* Container-Query Adaptive Timetable Class Block */
+.waqti-slot-container {
+  container-type: inline-size;
+  container-name: slotblock;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.waqti-slot-time-full {
+  display: none;
+}
+
+.waqti-slot-time-compact {
+  display: inline;
+}
+
+.waqti-slot-meta {
+  display: none;
+}
+
+@container slotblock (min-width: 116px) {
+  .waqti-slot-time-full {
+    display: inline;
+  }
+  .waqti-slot-time-compact {
+    display: none;
+  }
+}
+
+@container slotblock (min-width: 126px) {
+  .waqti-slot-meta {
+    display: flex;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, ::before, ::after {
     animation-duration: 0.01ms !important;
@@ -237,3 +272,4 @@ body {
     scroll-behavior: auto !important;
   }
 }
+
